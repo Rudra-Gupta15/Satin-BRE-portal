@@ -54,7 +54,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
       <div className="border-b border-purple-200 pb-4 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-2xl font-extrabold text-[#3b0764]">
-            Products: Select Data Products ({selectedIds.length} Selected)
+            Data Sources: Select Data Sources ({selectedIds.length} Selected)
           </h1>
           <p className="text-xs text-slate-600 mt-1">
             Select any of the {sourcesList.length} financial data feeds below to aggregate features & train underwriting risk models.
@@ -67,7 +67,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
             className="px-3.5 py-2 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white shadow-md shadow-purple-950/20 transition-all flex items-center space-x-1.5 cursor-pointer"
           >
             <Plus className="w-4 h-4" />
-            <span>Add Product</span>
+            <span>Add Data Source</span>
           </button>
 
           <button
@@ -95,14 +95,9 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
               }`}
             >
               <div className="space-y-1.5 pr-3 flex-1">
-                <div className="flex items-center space-x-2">
-                  <span className="text-[10px] font-mono text-purple-700 font-bold bg-purple-100 px-2 py-0.5 rounded">
-                    Feed #{index + 1}
-                  </span>
-                  <h3 className={`text-sm font-bold ${isSelected ? 'text-[#3b0764]' : 'text-slate-800'}`}>
-                    {source.title}
-                  </h3>
-                </div>
+                <h3 className={`text-sm font-bold ${isSelected ? 'text-[#3b0764]' : 'text-slate-800'}`}>
+                  {source.title}
+                </h3>
                 <p className="text-xs text-slate-500 leading-relaxed">
                   {source.shortDesc}
                 </p>
@@ -156,14 +151,9 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
           <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-purple-100 space-y-5 animate-in fade-in zoom-in-95 duration-150">
             
             <div className="flex items-center justify-between border-b border-purple-100 pb-3">
-              <div className="flex items-center space-x-2">
-                <div className="p-2 rounded-xl bg-purple-100 text-[#3b0764]">
-                  <Sparkles className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="text-lg font-extrabold text-[#3b0764]">Add New Data Product</h2>
-                  <p className="text-xs text-slate-500">Configure a custom financial feed for feature aggregation</p>
-                </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-[#3b0764]">Add New Data Source</h2>
+                <p className="text-xs text-slate-500">Configure a custom financial feed for feature aggregation</p>
               </div>
 
               <button
@@ -177,7 +167,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
             <form onSubmit={handleAddProduct} className="space-y-4">
               <div>
                 <label className="block text-xs font-bold text-[#3b0764] mb-1">
-                  Product / Data Feed Name *
+                  Data Source / Feed Name *
                 </label>
                 <input
                   type="text"

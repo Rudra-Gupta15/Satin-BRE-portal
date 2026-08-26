@@ -4,12 +4,22 @@ import OverviewDashboard from './components/OverviewDashboard';
 import Page1Selection from './components/Page1Selection';
 import Page2Pipeline from './components/Page2Pipeline';
 import Page3Inference from './components/Page3Inference';
+import AiArchitecture from './components/AiArchitecture';
+import Settings from './components/Settings';
 import DataDetailModal from './components/DataDetailModal';
 import LoginPage from './components/LoginPage';
 import { DATA_SOURCES } from './data/dataSources';
 
 export default function App() {
-  const [user, setUser] = useState(null); // User authentication state
+  // User authentication state - persisted in localStorage to prevent HMR reset on code edits
+  const [user, setUser] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('bre_user');
+      return savedUser ? JSON.parse(savedUser) : { email: 'ABCD@gmail.com', name: 'Credit Manager' };
+    } catch (e) {
+      return { email: 'ABCD@gmail.com', name: 'Credit Manager' };
+    }
+  });
 
   // Single active view state for Left Sidebar: 'overview' | 'products' | 'model_hub' | 'model_testing'
   const [activeView, setActiveView] = useState('overview');
@@ -55,10 +65,16 @@ export default function App() {
 
   const handleLoginSuccess = (userData) => {
     setUser(userData);
+    try {
+      localStorage.setItem('bre_user', JSON.stringify(userData));
+    } catch (e) {}
   };
 
   const handleLogout = () => {
     setUser(null);
+    try {
+      localStorage.removeItem('bre_user');
+    } catch (e) {}
     handleReset();
   };
 
@@ -127,6 +143,16 @@ export default function App() {
               onNavigateBack={() => setActiveView('products')}
               onReprocessPipeline={() => setActiveView('model_hub')}
             />
+          )}
+
+          {/* 5. AI Architecture Specifications */}
+          {activeView === 'ai_architecture' && (
+            <AiArchitecture />
+          )}
+
+          {/* 6. System Settings */}
+          {activeView === 'settings' && (
+            <Settings />
           )}
 
         </main>

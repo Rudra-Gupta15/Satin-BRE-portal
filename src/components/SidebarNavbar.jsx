@@ -2,12 +2,14 @@ import React from 'react';
 import { RefreshCw, LogOut, User } from 'lucide-react';
 
 export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout }) {
-  // 4 Navigation Items for the Left Sidebar
+  // 6 Navigation Items for the Left Sidebar
   const sidebarItems = [
     { id: 'overview', name: "Overview", desc: "Data Feeds & Vector Status" },
-    { id: 'products', name: "Products", desc: "Selected Data Products" },
+    { id: 'products', name: "Data Sources", desc: "Selected Data Feeds" },
     { id: 'model_hub', name: "Model Hub", desc: "Process Studio & Training" },
     { id: 'model_testing', name: "Model Testing", desc: "Inference & Risk Analytics" },
+    { id: 'ai_architecture', name: "AI Architecture", desc: "LLM Data Extraction Engine" },
+    { id: 'settings', name: "Settings", desc: "System & Threshold Config" },
   ];
 
   return (
@@ -30,17 +32,9 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
           </span>
         </div>
 
-        {/* Section Title */}
-        <div className="px-1">
-          <span className="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest block">
-            MAIN NAVIGATION
-          </span>
-          <h3 className="text-sm font-extrabold text-[#3b0764] mt-0.5">
-            Satin BRE Portal
-          </h3>
-        </div>
 
-        {/* 4 Sidebar Menu Items */}
+
+        {/* 5 Sidebar Menu Items */}
         <nav className="space-y-2">
           {sidebarItems.map((item) => {
             const isSelected = activeView === item.id;

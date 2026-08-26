@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Check, ArrowRight, Play, RefreshCw, Loader2, ChevronDown, Table, FileText, Cpu, Download, Database, Rocket } from 'lucide-react';
+import { Check, ArrowRight, Play, RefreshCw, Loader2, ChevronDown, Table, FileText, Cpu, Download, Database, Rocket, Sparkles } from 'lucide-react';
 import { DATA_SOURCES } from '../data/dataSources';
 
 export default function Page2Pipeline({ 
@@ -14,9 +14,10 @@ export default function Page2Pipeline({
 }) {
   const [uploadedFiles, setUploadedFiles] = useState({});
   const [fileTypes, setFileTypes] = useState({});
-  const [selectedLLM, setSelectedLLM] = useState("gemma");
-  const [isExtractingData, setIsExtractingData] = useState(false);
-  const [dataExtracted, setDataExtracted] = useState(false);
+
+  // Raw Data Noise Level State (Default: 60% noise -> > 40% noise triggers LLM activation)
+  const [rawNoisePercent, setRawNoisePercent] = useState(60);
+  const isLLMActiveForNoise = rawNoisePercent > 40;
 
   // Pipeline state (Steps 1..5: Data Gathering, Preprocess, Normalize, Feature Eng, Data Selection)
   const [isPipelineRunning, setIsPipelineRunning] = useState(false);
@@ -102,15 +103,6 @@ export default function Page2Pipeline({
       ...prev,
       [id]: type
     }));
-  };
-
-  const handleExtractData = () => {
-    setIsExtractingData(true);
-    setDataExtracted(false);
-    setTimeout(() => {
-      setIsExtractingData(false);
-      setDataExtracted(true);
-    }, 800);
   };
 
   const handleVersionChange = (modelId, version) => {
@@ -213,24 +205,7 @@ export default function Page2Pipeline({
                 </div>
 
                 <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center space-x-2">
-                    <label className="text-[11px] font-semibold text-slate-600 whitespace-nowrap">File Type:</label>
-                    <div className="relative">
-                      <select
-                        value={currentFileType}
-                        onChange={(e) => handleFileTypeChange(source.id, e.target.value)}
-                        className="bg-white border border-purple-200 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-6"
-                      >
-                        <option value="pdf">PDF</option>
-                        <option value="csv">CSV</option>
-                        <option value="word">Word</option>
-                        <option value="image">Image</option>
-                      </select>
-                      <ChevronDown className="w-3.5 h-3.5 text-purple-500 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    </div>
-                  </div>
-
-                  <div className="text-[10px] text-slate-500 font-mono truncate max-w-30">
+                  <div className="text-xs text-slate-500 font-mono truncate">
                     {fileName ? fileName : 'No file uploaded'}
                   </div>
 
@@ -253,66 +228,12 @@ export default function Page2Pipeline({
         </div>
       </div>
 
-      {/* 2. Select LLM Section + Extract Data Button */}
-      <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-3 shadow-sm">
-        <h2 className="text-sm font-bold text-[#3b0764] border-b border-purple-100 pb-3">
-          2. Select LLM Data Extraction Engine
-        </h2>
-
-        <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-          <div className="w-full sm:max-w-md">
-            <label className="text-xs text-slate-600 font-semibold mb-1.5 block">
-              Choose Base LLM Architecture:
-            </label>
-            <div className="relative">
-              <select
-                value={selectedLLM}
-                onChange={(e) => setSelectedLLM(e.target.value)}
-                className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3 py-2.5 text-xs font-semibold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-8"
-              >
-                <option value="gemma">Gemma</option>
-                <option value="qwen">Qwen</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-purple-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
-            <span className="text-[10px] text-slate-500 mt-1 block">
-              Selected Model Engine: <strong className="text-[#3b0764] uppercase">{selectedLLM}</strong>
-            </span>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={handleExtractData}
-              disabled={isExtractingData}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white transition-all flex items-center space-x-1.5 shadow-md shadow-purple-950/20 cursor-pointer"
-            >
-              {isExtractingData ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Extracting Data...</span>
-                </>
-              ) : (
-                <>
-                  <Database className="w-3.5 h-3.5" />
-                  <span>Extract Data</span>
-                </>
-              )}
-            </button>
-            {dataExtracted && (
-              <span className="text-[11px] font-bold text-emerald-600 flex items-center gap-1 font-mono bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
-                <Check className="w-3.5 h-3.5 stroke-3" /> Data Extracted!
-              </span>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* 3. Data Pre-Processing & Feature Engineering Process (5 Steps) */}
+      {/* 2. Data Pre-Processing & Feature Engineering Process (5 Steps) */}
       <div className="space-y-3">
         <div className="flex items-center justify-between px-1">
           <div>
             <h2 className="text-sm font-extrabold text-[#3b0764]">
-              3. Data Pre-Processing & Feature Engineering Process
+              2. Data Pre-Processing & Feature Engineering Process
             </h2>
             <span className="text-[10px] text-slate-500 font-mono">Stage 1: Vector Preprocessing, Normalization & Feature Selection</span>
           </div>
@@ -370,14 +291,32 @@ export default function Page2Pipeline({
         </div>
       </div>
 
+      {/* 3. LLM Noise Inspection & Activation Box */}
+      <div className="border border-purple-100 rounded-2xl p-5 bg-white shadow-sm">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-extrabold text-[#3b0764]">
+              3. LLM Noise Inspection & Activation
+            </h2>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Raw Data Noise: <strong className="text-[#3b0764]">60%</strong> (Exceeds 40% Noise Threshold Limit)
+            </p>
+          </div>
+
+          <div className="px-4 py-2 rounded-xl bg-purple-100 border border-purple-200 text-[#3b0764] text-xs font-mono font-bold shrink-0 flex items-center space-x-2">
+            <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
+            <span>LLM Activated</span>
+          </div>
+        </div>
+      </div>
+
       {/* 4. Processed Dataset Table */}
       {showProcessedTable && (
         <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">PROCESS VECTOR OUTPUT</span>
-              <h2 className="text-sm font-bold text-[#3b0764] flex items-center gap-1.5">
-                <Table className="w-4 h-4 text-purple-700" />
+              <h2 className="text-sm font-bold text-[#3b0764]">
                 4. Processed Dataset Table
               </h2>
             </div>
@@ -410,7 +349,7 @@ export default function Page2Pipeline({
                     <td className="py-2 px-3">{row.cersai}</td>
                     <td className="py-2 px-3 font-semibold">{row.normScore}</td>
                     <td className="py-2 px-3">
-                      <span className="px-2 py-0.5 rounded-md bg-purple-50 border border-purple-200 text-[10px] font-bold text-[#3b0764]">
+                      <span className="w-24 inline-block text-center py-0.5 rounded-md bg-purple-50 border border-purple-200 text-[10px] font-bold text-[#3b0764]">
                         {row.status}
                       </span>
                     </td>
@@ -428,8 +367,7 @@ export default function Page2Pipeline({
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL SELECTION & TRAINING</span>
-              <h2 className="text-sm font-bold text-[#3b0764] flex items-center gap-1.5">
-                <Cpu className="w-4 h-4 text-purple-700" />
+              <h2 className="text-sm font-bold text-[#3b0764]">
                 5. Model Training Process
               </h2>
             </div>
@@ -447,8 +385,7 @@ export default function Page2Pipeline({
                 onChange={() => setSelectedDatasetFile("processed_features_vector.csv")}
                 className="w-4 h-4 text-purple-600 focus:ring-purple-500"
               />
-              <label htmlFor="fileSelect" className="text-xs font-bold text-[#3b0764] cursor-pointer flex items-center gap-1.5">
-                <FileText className="w-4 h-4 text-purple-700" />
+              <label htmlFor="fileSelect" className="text-xs font-bold text-[#3b0764] cursor-pointer">
                 File: <span className="font-mono text-purple-900 font-semibold">processed_features_vector.csv</span>
               </label>
             </div>
@@ -544,8 +481,7 @@ export default function Page2Pipeline({
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL REGISTRY & DEPLOYMENT</span>
-              <h2 className="text-sm font-bold text-[#3b0764] flex items-center gap-1.5">
-                <Rocket className="w-4 h-4 text-purple-700" />
+              <h2 className="text-sm font-bold text-[#3b0764]">
                 7. Model Version & Deployment Management Table
               </h2>
             </div>
@@ -590,7 +526,7 @@ export default function Page2Pipeline({
                       <td className="py-2 px-3 font-bold text-[#3b0764]">{model.name}</td>
 
                       <td className="py-2 px-3">
-                        <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-extrabold font-mono border ${
+                        <span className={`w-20 inline-block text-center py-0.5 rounded-md text-[10px] font-extrabold font-mono border ${
                           currentStatus === "Deployed"
                             ? 'bg-purple-900 text-white border-purple-900'
                             : 'bg-purple-50 text-[#3b0764] border-purple-200'

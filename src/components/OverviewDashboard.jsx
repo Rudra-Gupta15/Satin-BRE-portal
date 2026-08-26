@@ -1,17 +1,15 @@
 import React, { useState } from 'react';
-import { 
-  FileText, Activity, ShieldCheck, Clock, AlertTriangle, ArrowRight, Table, Layers
-} from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from 'recharts';
 
 export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
   // 5 KPI Metric Cards
   const kpiData = [
-    { id: 'analyzed', label: 'ANALYZED', value: '89', desc: 'Statements analyzed', color: 'text-[#3b0764]', bgIcon: 'bg-purple-100/70', icon: FileText },
-    { id: 'processed', label: 'PROCESSED', value: '16,668', desc: 'Transactions processed', color: 'text-purple-700', bgIcon: 'bg-purple-100/70', icon: Activity },
-    { id: 'avg_score', label: 'AVG SCORE', value: '877.9', sub: '/ 900', desc: 'Average risk score', color: 'text-emerald-700', bgIcon: 'bg-emerald-100/70', icon: ShieldCheck },
-    { id: 'pending', label: 'PENDING', value: '571', desc: 'Pending human reviews', color: 'text-amber-700', bgIcon: 'bg-amber-100/70', icon: Clock },
-    { id: 'anomalies', label: 'ANOMALIES', value: '4,540', desc: 'Anomalies flagged', color: 'text-rose-700', bgIcon: 'bg-rose-100/70', icon: AlertTriangle },
+    { id: 'analyzed', label: 'ANALYZED', value: '89', desc: 'Statements analyzed', color: 'text-[#3b0764]', badge: '+12.4%', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
+    { id: 'processed', label: 'PROCESSED', value: '16,668', desc: 'Transactions processed', color: 'text-purple-700', badge: '+8.2%', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
+    { id: 'avg_score', label: 'AVG SCORE', value: '877.9', sub: '/ 900', desc: 'Average risk score', color: 'text-emerald-700', badge: 'Optimal', badgeStyle: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+    { id: 'pending', label: 'PENDING', value: '571', desc: 'Pending human reviews', color: 'text-amber-700', badge: 'Queued', badgeStyle: 'bg-amber-50 text-amber-800 border-amber-200' },
+    { id: 'anomalies', label: 'ANOMALIES', value: '4,540', desc: 'Anomalies flagged', color: 'text-rose-700', badge: 'Flagged', badgeStyle: 'bg-rose-50 text-rose-800 border-rose-200' },
   ];
 
   // Bar chart data for "Statements by status"
@@ -189,38 +187,35 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
         </div>
       </div>
 
-      {/* 5 Top KPI Cards with Tighter Padding */}
+      {/* 5 Top KPI Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-        {kpiData.map((kpi) => {
-          const IconComp = kpi.icon;
-          return (
-            <div
-              key={kpi.id}
-              className="p-3.5 rounded-2xl bg-white border border-purple-100 shadow-xs hover:shadow-md hover:-translate-y-0.5 transition-all space-y-1.5 flex flex-col justify-between"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-[10px] font-extrabold font-mono text-slate-400 tracking-wider">
-                  {kpi.label}
-                </span>
-                <div className={`p-1.5 rounded-lg ${kpi.bgIcon}`}>
-                  <IconComp className={`w-3.5 h-3.5 ${kpi.color}`} />
-                </div>
-              </div>
-
-              <div>
-                <div className="flex items-baseline space-x-1">
-                  <span className={`text-xl font-extrabold font-mono ${kpi.color}`}>
-                    {kpi.value}
-                  </span>
-                  {kpi.sub && (
-                    <span className="text-[10px] font-mono text-slate-400">{kpi.sub}</span>
-                  )}
-                </div>
-                <p className="text-[10px] text-slate-500 truncate mt-0.5">{kpi.desc}</p>
-              </div>
+        {kpiData.map((kpi) => (
+          <div
+            key={kpi.id}
+            className="p-3.5 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-2 flex flex-col justify-between"
+          >
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-extrabold font-mono text-slate-400 tracking-wider">
+                {kpi.label}
+              </span>
+              <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-md border ${kpi.badgeStyle}`}>
+                {kpi.badge}
+              </span>
             </div>
-          );
-        })}
+
+            <div>
+              <div className="flex items-baseline space-x-1">
+                <span className={`text-xl font-extrabold font-mono ${kpi.color}`}>
+                  {kpi.value}
+                </span>
+                {kpi.sub && (
+                  <span className="text-[10px] font-mono text-slate-400 font-bold">{kpi.sub}</span>
+                )}
+              </div>
+              <p className="text-[10px] text-slate-500 truncate mt-0.5">{kpi.desc}</p>
+            </div>
+          </div>
+        ))}
       </div>
 
       {/* Middle Interactive Charts Section */}
@@ -303,8 +298,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
       {/* Bottom Table: Recent Statements */}
       <div className="p-4 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-3">
         <div className="flex items-center justify-between border-b border-purple-100 pb-2">
-          <div className="flex items-center space-x-2">
-            <Table className="w-4 h-4 text-purple-700" />
+          <div>
             <h3 className="text-sm font-bold text-[#3b0764]">
               Recent Bank Statements & Ingestion Status
             </h3>
@@ -334,7 +328,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
                   <td className="py-2 px-3 text-right font-bold text-slate-900">{row.txCount}</td>
                   <td className="py-2 px-3 font-extrabold text-slate-900">{row.riskScore} / 900</td>
                   <td className="py-2 px-3">
-                    <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                    <span className={`w-20 inline-block text-center py-0.5 rounded text-[10px] font-extrabold ${
                       row.grade === 'LOW' 
                         ? 'bg-emerald-100 text-emerald-800' 
                         : row.grade === 'MEDIUM' 
@@ -345,7 +339,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
                     </span>
                   </td>
                   <td className="py-2 px-3">
-                    <span className={`px-2 py-0.5 rounded border text-[10px] font-bold ${
+                    <span className={`w-24 inline-block text-center py-0.5 rounded border text-[10px] font-bold ${
                       row.status === 'ANALYZED'
                         ? 'bg-purple-50 border-purple-200 text-[#3b0764]'
                         : 'bg-rose-50 border-rose-200 text-rose-700'

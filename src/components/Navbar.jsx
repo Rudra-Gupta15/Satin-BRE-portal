@@ -6,6 +6,7 @@ export default function Navbar({ currentStep, setCurrentStep, selectedSourcesCou
     { id: 1, name: "1. Select Data (Page 1)" },
     { id: 2, name: "2. Train Models (Page 2)" },
     { id: 3, name: "3. View Results (Page 3)" },
+    { id: 4, name: "4. AI Architecture" },
   ];
 
   return (
