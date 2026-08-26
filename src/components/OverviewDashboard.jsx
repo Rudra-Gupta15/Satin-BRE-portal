@@ -1,39 +1,46 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell } from 'recharts';
+import { api } from '../api/client';
+
+const KPI_META = {
+  analyzed: { color: 'text-[#3b0764]', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
+  processed: { color: 'text-purple-700', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
+  avg_score: { color: 'text-emerald-700', badgeStyle: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
+  pending: { color: 'text-amber-700', badgeStyle: 'bg-amber-50 text-amber-800 border-amber-200' },
+  anomalies: { color: 'text-rose-700', badgeStyle: 'bg-rose-50 text-rose-800 border-rose-200' },
+};
+
+const STATUS_COLOR = { ANALYZED: '#3b0764', FAILED: '#ef4444', NORMALIZED: '#8b5cf6' };
+const GRADE_COLOR = { 'LOW Risk': '#059669', 'MEDIUM Risk': '#f59e0b', 'HIGH Risk': '#ef4444' };
 
 export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
-  // 5 KPI Metric Cards
-  const kpiData = [
-    { id: 'analyzed', label: 'ANALYZED', value: '89', desc: 'Statements analyzed', color: 'text-[#3b0764]', badge: '+12.4%', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
-    { id: 'processed', label: 'PROCESSED', value: '16,668', desc: 'Transactions processed', color: 'text-purple-700', badge: '+8.2%', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
-    { id: 'avg_score', label: 'AVG SCORE', value: '877.9', sub: '/ 900', desc: 'Average risk score', color: 'text-emerald-700', badge: 'Optimal', badgeStyle: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
-    { id: 'pending', label: 'PENDING', value: '571', desc: 'Pending human reviews', color: 'text-amber-700', badge: 'Queued', badgeStyle: 'bg-amber-50 text-amber-800 border-amber-200' },
-    { id: 'anomalies', label: 'ANOMALIES', value: '4,540', desc: 'Anomalies flagged', color: 'text-rose-700', badge: 'Flagged', badgeStyle: 'bg-rose-50 text-rose-800 border-rose-200' },
-  ];
+  const [kpiData, setKpiData] = useState([]);
+  const [barData, setBarData] = useState([]);
+  const [donutData, setDonutData] = useState([]);
+  const [recentStatements, setRecentStatements] = useState([]);
 
-  // Bar chart data for "Statements by status"
-  const barData = [
-    { status: 'ANALYZED', count: 76, color: '#3b0764' },
-    { status: 'FAILED', count: 7, color: '#ef4444' },
-    { status: 'NORMALIZED', count: 6, color: '#8b5cf6' },
-  ];
+  useEffect(() => {
+    api.get('/dashboard/kpis').then((data) => {
+      setKpiData(data.kpis.map((k) => ({ ...k, ...KPI_META[k.id] })));
+    });
+    api.get('/dashboard/charts').then((data) => {
+      setBarData(data.byStatus.map((s) => ({ ...s, color: STATUS_COLOR[s.status] || '#3b0764' })));
+      setDonutData(data.byRiskGrade.map((g) => ({ ...g, color: GRADE_COLOR[g.name] || '#3b0764' })));
+    });
+    api.get('/dashboard/recent-statements').then((data) => {
+      setRecentStatements(data.recentStatements.map((s) => ({
+        ...s,
+        date: new Date(s.date).toISOString().slice(0, 16).replace('T', ' '),
+      })));
+    });
+  }, []);
 
-  // Donut chart data for "Statements by risk grade"
-  const donutData = [
-    { name: 'LOW Risk', value: 75, color: '#059669' },
-    { name: 'MEDIUM Risk', value: 8, color: '#f59e0b' },
-    { name: 'HIGH Risk', value: 6, color: '#ef4444' },
-  ];
-
-  // Table Data
-  const recentStatements = [
-    { id: "STMT-2026-0891", bank: "Axis Bank AA Feed", date: "2026-08-25 16:45", txCount: "142", riskScore: "885", grade: "LOW", status: "ANALYZED" },
-    { id: "STMT-2026-0890", bank: "HDFC Bank Statement", date: "2026-08-25 16:20", txCount: "69", riskScore: "851", grade: "LOW", status: "ANALYZED" },
-    { id: "STMT-2026-0889", bank: "ICICI Corporate Feed", date: "2026-08-25 15:50", txCount: "310", riskScore: "720", grade: "MEDIUM", status: "ANALYZED" },
-    { id: "STMT-2026-0888", bank: "State Bank of India", date: "2026-08-25 14:15", txCount: "88", riskScore: "912", grade: "LOW", status: "ANALYZED" },
-    { id: "STMT-2026-0887", bank: "Kotak Mahindra Feed", date: "2026-08-25 13:00", txCount: "18", riskScore: "490", grade: "HIGH", status: "FAILED" },
-  ];
+  const totalAnalyzed = barData.reduce((sum, b) => sum + b.count, 0) || 89;
+  const lowRiskEntry = donutData.find((d) => d.name === 'LOW Risk');
+  const lowRiskPct = donutData.length
+    ? ((lowRiskEntry?.value || 0) / donutData.reduce((s, d) => s + d.value, 0) * 100).toFixed(1)
+    : '0.0';
 
   const renderCustomBarLabel = (props) => {
     const { x, y, width, value, index } = props;
@@ -41,7 +48,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
     const entry = barData[index];
     if (!entry) return null;
 
-    const percentage = ((value / 89) * 100).toFixed(1);
+    const percentage = ((value / totalAnalyzed) * 100).toFixed(1);
     const color = entry.color || '#3b0764';
     const cx = x + width / 2;
 
@@ -110,7 +117,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
 
     const textAnchor = isRight ? 'start' : 'end';
     const labelColor = payload.color || '#3b0764';
-    const percentage = ((value / 89) * 100).toFixed(1);
+    const percentage = ((value / totalAnalyzed) * 100).toFixed(1);
 
     return (
       <g>
@@ -206,7 +213,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
             <div>
               <div className="flex items-baseline space-x-1">
                 <span className={`text-xl font-extrabold font-mono ${kpi.color}`}>
-                  {kpi.value}
+                  {typeof kpi.value === 'number' ? kpi.value.toLocaleString('en-IN') : kpi.value}
                 </span>
                 {kpi.sub && (
                   <span className="text-[10px] font-mono text-slate-400 font-bold">{kpi.sub}</span>
@@ -231,7 +238,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
               <p className="text-[10px] text-slate-400">Integrated callout data labels</p>
             </div>
             <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
-              Total: 89
+              Total: {totalAnalyzed}
             </span>
           </div>
 
@@ -260,7 +267,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
               <p className="text-[10px] text-slate-400">Integrated callout data labels</p>
             </div>
             <span className="text-[10px] font-mono font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
-              84.3% LOW Risk
+              {lowRiskPct}% LOW Risk
             </span>
           </div>
 
@@ -287,7 +294,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
 
             {/* Donut Center Counter Badge */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-extrabold text-[#3b0764] font-mono leading-none">75</span>
+              <span className="text-2xl font-extrabold text-[#3b0764] font-mono leading-none">{lowRiskEntry?.value ?? 0}</span>
               <span className="text-[10px] font-extrabold text-emerald-600 uppercase mt-1 tracking-wider">LOW RISK</span>
             </div>
           </div>

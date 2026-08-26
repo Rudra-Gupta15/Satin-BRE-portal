@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import SidebarNavbar from './components/SidebarNavbar';
 import OverviewDashboard from './components/OverviewDashboard';
 import Page1Selection from './components/Page1Selection';
@@ -8,7 +8,7 @@ import AiArchitecture from './components/AiArchitecture';
 import Settings from './components/Settings';
 import DataDetailModal from './components/DataDetailModal';
 import LoginPage from './components/LoginPage';
-import { DATA_SOURCES } from './data/dataSources';
+import { api } from './api/client';
 
 export default function App() {
   // User authentication state - persisted in localStorage to prevent HMR reset on code edits
@@ -29,6 +29,13 @@ export default function App() {
   const [inspectedSource, setInspectedSource] = useState(null);
   const [trainedModels, setTrainedModels] = useState([]);
 
+  // Restore selection persisted server-side (survives a full page reload)
+  useEffect(() => {
+    api.get('/data-sources/selection')
+      .then((data) => setSelectedIds(data.selectedIds || []))
+      .catch(() => {});
+  }, []);
+
   // Deployment & Version Management Shared State
   const [selectedVersionMap, setSelectedVersionMap] = useState({
     risk_model: "v3.4",
@@ -43,6 +50,15 @@ export default function App() {
     fraud_model: "Ready",
     money_balance_model: "Ready"
   });
+
+  // Restore trained models / versions / deployment status from a prior run this session
+  useEffect(() => {
+    api.get('/models').then((data) => {
+      if (data.trainedModels?.length) setTrainedModels(data.trainedModels);
+      setSelectedVersionMap(data.selectedVersionMap);
+      setDeployedStatusMap(data.deployedStatusMap);
+    }).catch(() => {});
+  }, []);
 
   const handleReset = () => {
     setActiveView('overview');
@@ -61,6 +77,7 @@ export default function App() {
       fraud_model: "Ready",
       money_balance_model: "Ready"
     });
+    api.post('/reset').catch(() => {});
   };
 
   const handleLoginSuccess = (userData) => {
@@ -160,7 +177,7 @@ export default function App() {
         {/* Footer */}
         <footer className="border-t border-purple-200 bg-white/80 py-3 text-center text-xs text-slate-500">
           <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-            <span>Satin Finserv Limited — BRE AI Financial Risk & Underwriting Platform</span>
+            <span>SFL Training — BRE AI Financial Risk &amp; Underwriting Platform</span>
             <span className="font-mono text-[#3b0764] font-semibold">11 Data Vectors Integrated</span>
           </div>
         </footer>

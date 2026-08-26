@@ -1,50 +1,64 @@
-import React, { useState } from 'react';
-import { Check, ArrowRight, Layers, Plus, X, Sparkles } from 'lucide-react';
-import { DATA_SOURCES } from '../data/dataSources';
+import React, { useEffect, useState } from 'react';
+import { Check, ArrowRight, Layers, Plus, X, Sparkles, Loader2 } from 'lucide-react';
+import { api } from '../api/client';
 
 export default function Page1Selection({ selectedIds, setSelectedIds, onNext, onInspect }) {
-  const [sourcesList, setSourcesList] = useState(DATA_SOURCES);
+  const [sourcesList, setSourcesList] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newFields, setNewFields] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    api.get('/data-sources')
+      .then((data) => setSourcesList(data.dataSources))
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  const persistSelection = (ids) => {
+    setSelectedIds(ids);
+    api.put('/data-sources/selection', { selectedIds: ids }).catch(() => {});
+  };
 
   const toggleSource = (id) => {
     if (selectedIds.includes(id)) {
-      setSelectedIds(selectedIds.filter(item => item !== id));
+      persistSelection(selectedIds.filter(item => item !== id));
     } else {
-      setSelectedIds([...selectedIds, id]);
+      persistSelection([...selectedIds, id]);
     }
   };
 
   const toggleSelectAll = () => {
     if (selectedIds.length === sourcesList.length) {
-      setSelectedIds([]);
+      persistSelection([]);
     } else {
-      setSelectedIds(sourcesList.map(s => s.id));
+      persistSelection(sourcesList.map(s => s.id));
     }
   };
 
-  const handleAddProduct = (e) => {
+  const handleAddProduct = async (e) => {
     e.preventDefault();
     if (!newTitle.trim()) return;
 
-    const newId = `custom_feed_${Date.now()}`;
-    const newSource = {
-      id: newId,
-      title: newTitle.trim(),
-      shortDesc: newDesc.trim() || 'Custom financial data integration feed.',
-      fullDesc: newDesc.trim() || 'Custom data feed integrated for risk model scoring.',
-      sampleFields: newFields ? newFields.split(',').map(f => f.trim()) : ['custom_metric_1', 'custom_ratio_2'],
-      sampleData: { record_id: 'REC-9910', timestamp: new Date().toISOString() }
-    };
-
-    setSourcesList([...sourcesList, newSource]);
-    setSelectedIds([...selectedIds, newId]);
-    setNewTitle('');
-    setNewDesc('');
-    setNewFields('');
-    setIsAddModalOpen(false);
+    setIsSubmitting(true);
+    try {
+      const data = await api.post('/data-sources', {
+        title: newTitle.trim(),
+        desc: newDesc.trim(),
+        fields: newFields,
+      });
+      const newSource = data.dataSource;
+      setSourcesList((prev) => [...prev, newSource]);
+      persistSelection([...selectedIds, newSource.id]);
+      setNewTitle('');
+      setNewDesc('');
+      setNewFields('');
+      setIsAddModalOpen(false);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -80,6 +94,12 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
       </div>
 
       {/* Data Source Box Grid */}
+      {isLoading ? (
+        <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Loading data sources...</span>
+        </div>
+      ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {sourcesList.map((source, index) => {
           const isSelected = selectedIds.includes(source.id);
@@ -129,6 +149,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
           );
         })}
       </div>
+      )}
 
       {/* Footer Navigation */}
       <div className="pt-5 border-t border-purple-200 flex items-center justify-between">
@@ -215,9 +236,10 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
                 </button>
                 <button
                   type="submit"
-                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white shadow-md shadow-purple-950/20 transition-all cursor-pointer"
+                  disabled={isSubmitting}
+                  className="px-5 py-2 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white shadow-md shadow-purple-950/20 transition-all cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  Add & Select Product
+                  {isSubmitting ? 'Adding...' : 'Add & Select Product'}
                 </button>
               </div>
             </form>

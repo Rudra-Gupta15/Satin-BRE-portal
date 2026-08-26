@@ -1,45 +1,60 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Mail, Lock, Shield, Zap, Users, RefreshCw, Eye, EyeOff } from 'lucide-react';
+import { api } from '../api/client';
 
 export default function LoginPage({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [captchaInput, setCaptchaInput] = useState('');
-  const [captchaCode, setCaptchaCode] = useState('ws7kP');
+  const [captchaCode, setCaptchaCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const generateCaptcha = () => {
-    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-    let code = '';
-    for (let i = 0; i < 5; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+  const generateCaptcha = async () => {
+    try {
+      const data = await api.get('/auth/captcha');
+      setCaptchaCode(data.captchaCode);
+    } catch (err) {
+      setError(err.message);
     }
-    setCaptchaCode(code);
   };
 
-  const handleLogin = (e) => {
+  useEffect(() => {
+    generateCaptcha();
+  }, []);
+
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!email || !password) {
       setError('Please enter both Email ID / Username and Password.');
       return;
     }
-    if (captchaInput.toLowerCase() !== captchaCode.toLowerCase()) {
-      setError('Invalid Captcha code. Please try again.');
-      generateCaptcha();
-      return;
-    }
+    setIsSubmitting(true);
     setError('');
-    onLoginSuccess({ email, role: 'Admin' });
+    try {
+      const data = await api.post('/auth/login', { email, password, captchaInput, captchaCode });
+      onLoginSuccess(data.user);
+    } catch (err) {
+      setError(err.message);
+      generateCaptcha();
+      setCaptchaInput('');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
-  const handleQuickLogin = (role) => {
-    const mockEmail = role === 'Admin' ? 'admin@satinfinserv.com' : 'user@satinfinserv.com';
-    setEmail(mockEmail);
-    setPassword('password123');
-    setCaptchaInput(captchaCode);
+  const handleQuickLogin = async (role) => {
     setError('');
-    onLoginSuccess({ email: mockEmail, role });
+    setIsSubmitting(true);
+    try {
+      const data = await api.post('/auth/quick-login', { role });
+      onLoginSuccess(data.user);
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -54,7 +69,7 @@ export default function LoginPage({ onLoginSuccess }) {
             <div className="relative max-w-sm w-full">
               <img
                 src="/pink_ev_auto_rickshaw.jpg"
-                alt="Satin Finserv EV Mobility BRE Platform"
+                alt="SFL Training — BRE AI Financial Risk & Underwriting Platform"
                 className="w-full h-auto object-contain rounded-2xl shadow-lg mix-blend-multiply"
                 onError={(e) => {
                   e.target.onerror = null;
@@ -69,7 +84,7 @@ export default function LoginPage({ onLoginSuccess }) {
               Welcome Back!
             </h1>
             <p className="text-sm text-slate-600 mt-1">
-              Sign in to access the Satin BRE data platform
+              Sign in to access the SFL Training BRE data platform
             </p>
           </div>
 
@@ -119,7 +134,7 @@ export default function LoginPage({ onLoginSuccess }) {
                   SFL
                 </span>
                 <span className="text-[10px] font-bold text-[#3b0764] tracking-wide block uppercase mt-0.5">
-                  Satin Finserv Limited
+                  SFL Training
                 </span>
               </div>
             </div>
@@ -201,9 +216,10 @@ export default function LoginPage({ onLoginSuccess }) {
               {/* Login Button */}
               <button
                 type="submit"
-                className="w-full py-3.5 rounded-xl font-bold text-sm bg-[#3b0764] hover:bg-purple-900 text-white shadow-lg shadow-purple-950/20 transition-all cursor-pointer mt-2"
+                disabled={isSubmitting}
+                className="w-full py-3.5 rounded-xl font-bold text-sm bg-[#3b0764] hover:bg-purple-900 text-white shadow-lg shadow-purple-950/20 transition-all cursor-pointer mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
-                Login
+                {isSubmitting ? 'Signing in...' : 'Login'}
               </button>
 
             </form>

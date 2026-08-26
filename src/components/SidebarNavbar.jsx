@@ -17,18 +17,16 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
       
       <div className="space-y-6">
         
-        {/* Top Branding Card matching Satin Finserv Logo */}
+        {/* Top Branding Card — SFL Training */}
         <div 
           className="w-full border border-purple-100 rounded-2xl bg-linear-to-b from-purple-50/60 to-white p-3.5 shadow-xs text-center space-y-1 hover:shadow-md transition-all cursor-pointer group"
           onClick={() => setActiveView('overview')}
         >
-          {/* Top Line: SFL Logo Text */}
           <span className="text-2.5xl font-black italic tracking-wider bg-linear-to-r from-rose-500 via-amber-500 to-purple-900 bg-clip-text text-transparent block group-hover:scale-105 transition-transform">
             SFL
           </span>
-          {/* Bottom Line: Satin Finserv Limited */}
           <span className="text-xs font-extrabold text-[#3b0764] italic block tracking-tight">
-            Satin Finserv Limited
+            SFL Training
           </span>
         </div>
 

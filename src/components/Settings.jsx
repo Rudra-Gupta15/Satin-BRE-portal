@@ -1,91 +1,76 @@
-import React, { useState } from 'react';
-import { 
-  Settings as SettingsIcon, 
-  Save, 
-  Shield, 
-  Sliders, 
-  Check, 
-  Key, 
-  Search, 
-  ToggleLeft, 
-  ToggleRight, 
-  RotateCcw, 
-  CheckCircle2, 
-  AlertTriangle, 
+import React, { useEffect, useState } from 'react';
+import {
+  Settings as SettingsIcon,
+  Save,
+  Shield,
+  Sliders,
+  Check,
+  Key,
+  Search,
+  ToggleLeft,
+  ToggleRight,
+  RotateCcw,
+  CheckCircle2,
+  AlertTriangle,
   HelpCircle,
   Filter,
-  Sparkles
+  Sparkles,
+  Loader2
 } from 'lucide-react';
-import { UNDERWRITING_RULE_CATEGORIES } from '../data/underwritingRules';
+import { api } from '../api/client';
 
 export default function Settings() {
-  const [defaultLLM, setDefaultLLM] = useState('gemma');
-  const [threshold, setThreshold] = useState('60');
-  const [environment, setEnvironment] = useState('production');
-  
-  // Rules State: map of rule.id -> boolean (enabled/disabled)
-  const [enabledRules, setEnabledRules] = useState(() => {
-    const initialMap = {};
-    UNDERWRITING_RULE_CATEGORIES.forEach(cat => {
-      cat.rules.forEach(rule => {
-        initialMap[rule.id] = rule.defaultEnabled !== false;
-      });
-    });
-    return initialMap;
-  });
+  const [categories, setCategories] = useState([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [enabledRules, setEnabledRules] = useState({});
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('all');
   const [isSaved, setIsSaved] = useState(false);
 
-  const handleToggleRule = (ruleId) => {
-    setEnabledRules(prev => ({
-      ...prev,
-      [ruleId]: !prev[ruleId]
-    }));
+  useEffect(() => {
+    api.get('/settings/rules')
+      .then((data) => {
+        setCategories(data.categories);
+        setEnabledRules(data.enabledRules);
+      })
+      .finally(() => setIsLoading(false));
+  }, []);
+
+  const handleToggleRule = async (ruleId) => {
+    setEnabledRules(prev => ({ ...prev, [ruleId]: !prev[ruleId] }));
+    try {
+      const data = await api.put(`/settings/rules/${ruleId}/toggle`);
+      setEnabledRules(prev => ({ ...prev, [ruleId]: data.enabled }));
+    } catch {
+      /* optimistic update already applied */
+    }
   };
 
-  const handleEnableAll = () => {
-    const updated = {};
-    UNDERWRITING_RULE_CATEGORIES.forEach(cat => {
-      cat.rules.forEach(rule => {
-        updated[rule.id] = true;
-      });
-    });
-    setEnabledRules(updated);
+  const handleEnableAll = async () => {
+    const data = await api.post('/settings/rules/set-all', { enabled: true });
+    setEnabledRules(data.enabledRules);
   };
 
-  const handleDisableAll = () => {
-    const updated = {};
-    UNDERWRITING_RULE_CATEGORIES.forEach(cat => {
-      cat.rules.forEach(rule => {
-        updated[rule.id] = false;
-      });
-    });
-    setEnabledRules(updated);
+  const handleDisableAll = async () => {
+    const data = await api.post('/settings/rules/set-all', { enabled: false });
+    setEnabledRules(data.enabledRules);
   };
 
-  const handleResetDefaults = () => {
-    const updated = {};
-    UNDERWRITING_RULE_CATEGORIES.forEach(cat => {
-      cat.rules.forEach(rule => {
-        updated[rule.id] = rule.defaultEnabled !== false;
-      });
-    });
-    setEnabledRules(updated);
-    setDefaultLLM('gemma');
-    setThreshold('60');
-    setEnvironment('production');
+  const handleResetDefaults = async () => {
+    const data = await api.post('/settings/rules/reset');
+    setEnabledRules(data.enabledRules);
   };
 
-  const handleSave = (e) => {
+  const handleSave = async (e) => {
     if (e) e.preventDefault();
+    await api.post('/settings/save');
     setIsSaved(true);
     setTimeout(() => setIsSaved(false), 2500);
   };
 
   // Filter categories and rules
-  const filteredCategories = UNDERWRITING_RULE_CATEGORIES.map(cat => {
+  const filteredCategories = categories.map(cat => {
     if (selectedCategory !== 'all' && cat.id !== selectedCategory) {
       return null;
     }
@@ -108,7 +93,7 @@ export default function Settings() {
     };
   }).filter(Boolean);
 
-  const totalRulesCount = UNDERWRITING_RULE_CATEGORIES.reduce((acc, cat) => acc + cat.rules.length, 0);
+  const totalRulesCount = categories.reduce((acc, cat) => acc + cat.rules.length, 0);
   const activeRulesCount = Object.values(enabledRules).filter(Boolean).length;
 
   const getSignalBadgeStyle = (signal) => {
@@ -227,7 +212,7 @@ export default function Settings() {
               className="w-full bg-purple-50/40 border border-purple-200 rounded-xl px-3 py-2 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 cursor-pointer"
             >
               <option value="all">All 15 Categories</option>
-              {UNDERWRITING_RULE_CATEGORIES.map(cat => (
+              {categories.map(cat => (
                 <option key={cat.id} value={cat.id}>{cat.title}</option>
               ))}
             </select>
@@ -236,6 +221,12 @@ export default function Settings() {
       </div>
 
       {/* 3. Render All 15 Rule Categories */}
+      {isLoading ? (
+        <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Loading underwriting rules...</span>
+        </div>
+      ) : (
       <div className="space-y-6">
         {filteredCategories.map((category) => {
           const categoryRulesCount = category.rules.length;
@@ -316,6 +307,7 @@ export default function Settings() {
           );
         })}
       </div>
+      )}
 
     </div>
   );

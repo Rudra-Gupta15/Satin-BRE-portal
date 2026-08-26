@@ -18,7 +18,7 @@ export default function Navbar({ currentStep, setCurrentStep, selectedSourcesCou
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => setCurrentStep(1)}>
             <div className="border border-purple-200 px-3 py-1 rounded-xl bg-purple-50 flex items-center space-x-1">
               <span className="font-extrabold text-sm text-orange-600">SFL</span>
-              <span className="text-[10px] font-bold text-[#3b0764] hidden sm:inline">SATIN BRE</span>
+              <span className="text-[10px] font-bold text-[#3b0764] hidden sm:inline">TRAINING</span>
             </div>
             <span className="font-extrabold text-base text-[#3b0764] hidden md:inline">
               Data & Risk Platform

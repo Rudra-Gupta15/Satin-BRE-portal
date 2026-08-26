@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   ChevronDown,
   Database,
@@ -7,6 +7,7 @@ import {
   Wifi,
   CheckCircle2
 } from 'lucide-react';
+import { api } from '../api/client';
 
 export default function AiArchitecture() {
   const [selectedLLM, setSelectedLLM] = useState("gemma");
@@ -29,25 +30,58 @@ export default function AiArchitecture() {
 
   const [isTestingVLLM, setIsTestingVLLM] = useState(false);
   const [vllmStatus, setVllmStatus] = useState("connected"); // 'connected' | 'testing' | 'disconnected'
+  const [latencyMs, setLatencyMs] = useState(null);
 
-  const handleExtractData = () => {
-    setIsExtractingData(true);
-    setDataExtracted(false);
+  useEffect(() => {
+    api.get('/ai-architecture').then((data) => {
+      setSelectedLLM(data.selectedLLM);
+      setDataExtracted(data.dataExtracted);
+      setCleanlinessPercent(data.cleanlinessPercent);
+      setVllmEnabled(data.vllm.enabled);
+      setVllmEndpoint(data.vllm.endpoint);
+      setVllmModelName(data.vllm.modelName);
+      setGpuCount(data.vllm.gpuCount);
+      setGpuMemoryUtil(data.vllm.gpuMemoryUtil);
+      setVllmStatus(data.vllm.status);
+    });
+  }, []);
 
-    setTimeout(() => {
-      setIsExtractingData(false);
-      setDataExtracted(true);
-    }, 800);
+  const handleSelectedLLMChange = (value) => {
+    setSelectedLLM(value);
+    api.put('/ai-architecture/llm', { selectedLLM: value }).catch(() => {});
   };
 
-  const handleTestVLLMConnection = () => {
+  const handleExtractData = async () => {
+    setIsExtractingData(true);
+    setDataExtracted(false);
+    try {
+      await api.post('/ai-architecture/extract');
+      setDataExtracted(true);
+    } finally {
+      setIsExtractingData(false);
+    }
+  };
+
+  const handleCleanlinessChange = async (value) => {
+    setCleanlinessPercent(value);
+    const data = await api.put('/ai-architecture/cleanliness', { cleanlinessPercent: value });
+    setCleanlinessPercent(data.cleanlinessPercent);
+  };
+
+  const persistVllmConfig = (patch) => {
+    api.put('/ai-architecture/vllm', patch).catch(() => {});
+  };
+
+  const handleTestVLLMConnection = async () => {
     setIsTestingVLLM(true);
     setVllmStatus("testing");
-
-    setTimeout(() => {
+    try {
+      const data = await api.post('/ai-architecture/vllm/test');
+      setVllmStatus(data.vllm.status);
+      setLatencyMs(data.latencyMs);
+    } finally {
       setIsTestingVLLM(false);
-      setVllmStatus("connected");
-    }, 700);
+    }
   };
 
   return (
@@ -82,7 +116,7 @@ export default function AiArchitecture() {
             <div className="relative">
               <select
                 value={selectedLLM}
-                onChange={(e) => setSelectedLLM(e.target.value)}
+                onChange={(e) => handleSelectedLLMChange(e.target.value)}
                 className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-8 shadow-2xs"
               >
                 <option value="gemma">Gemma 2 (vLLM Engine)</option>
@@ -143,7 +177,11 @@ export default function AiArchitecture() {
             </span>
             <button
               type="button"
-              onClick={() => setVllmEnabled(!vllmEnabled)}
+              onClick={() => {
+                const next = !vllmEnabled;
+                setVllmEnabled(next);
+                persistVllmConfig({ enabled: next });
+              }}
               className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${vllmEnabled ? 'bg-[#3b0764]' : 'bg-slate-300'
                 }`}
             >
@@ -170,6 +208,7 @@ export default function AiArchitecture() {
                   type="text"
                   value={vllmEndpoint}
                   onChange={(e) => setVllmEndpoint(e.target.value)}
+                  onBlur={(e) => persistVllmConfig({ endpoint: e.target.value })}
                   placeholder="http://localhost:8000/v1"
                   className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 shadow-2xs"
                 />
@@ -185,6 +224,7 @@ export default function AiArchitecture() {
                 type="text"
                 value={vllmModelName}
                 onChange={(e) => setVllmModelName(e.target.value)}
+                onBlur={(e) => persistVllmConfig({ modelName: e.target.value })}
                 placeholder="gemma-2-9b-it"
                 className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 shadow-2xs"
               />
@@ -197,7 +237,10 @@ export default function AiArchitecture() {
               </label>
               <select
                 value={gpuCount}
-                onChange={(e) => setGpuCount(e.target.value)}
+                onChange={(e) => {
+                  setGpuCount(e.target.value);
+                  persistVllmConfig({ gpuCount: e.target.value });
+                }}
                 className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 cursor-pointer shadow-2xs"
               >
                 <option value="1">1 GPU (NVIDIA A10G / RTX 4090)</option>
@@ -214,7 +257,10 @@ export default function AiArchitecture() {
               </label>
               <select
                 value={gpuMemoryUtil}
-                onChange={(e) => setGpuMemoryUtil(e.target.value)}
+                onChange={(e) => {
+                  setGpuMemoryUtil(e.target.value);
+                  persistVllmConfig({ gpuMemoryUtil: e.target.value });
+                }}
                 className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 cursor-pointer shadow-2xs"
               >
                 <option value="0.85">0.85 (85% VRAM Allocated)</option>
@@ -251,7 +297,7 @@ export default function AiArchitecture() {
             {vllmEnabled && vllmStatus === "connected" && (
               <div className="px-3.5 py-2 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs font-bold font-mono flex items-center space-x-2 shadow-2xs">
                 <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                <span>Connected • vLLM Active ({gpuCount} GPU TP) • 12ms Latency</span>
+                <span>Connected • vLLM Active ({gpuCount} GPU TP){latencyMs != null ? ` • ${latencyMs}ms Latency` : ''}</span>
               </div>
             )}
           </div>
@@ -278,7 +324,7 @@ export default function AiArchitecture() {
           <div className="relative w-full sm:w-36">
             <select
               value={cleanlinessPercent}
-              onChange={(e) => setCleanlinessPercent(Number(e.target.value))}
+              onChange={(e) => handleCleanlinessChange(Number(e.target.value))}
               className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-8 shadow-2xs"
             >
               <option value={60}>60%</option>

@@ -1,21 +1,25 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Check, ArrowRight, Play, RefreshCw, Loader2, ChevronDown, Table, FileText, Cpu, Download, Database, Rocket, Sparkles } from 'lucide-react';
-import { DATA_SOURCES } from '../data/dataSources';
+import { api } from '../api/client';
 
-export default function Page2Pipeline({ 
-  selectedIds, 
-  onNext, 
-  trainedModels, 
+export default function Page2Pipeline({
+  selectedIds,
+  onNext,
+  trainedModels,
   setTrainedModels,
   selectedVersionMap,
   setSelectedVersionMap,
   deployedStatusMap,
   setDeployedStatusMap
 }) {
-  const [uploadedFiles, setUploadedFiles] = useState({});
-  const [fileTypes, setFileTypes] = useState({});
+  const [allSources, setAllSources] = useState([]);
+  const [uploadedFiles, setUploadedFiles] = useState({}); // { [sourceId]: { fileName, cleanlinessPercent, sizeBytes, format, autoFilled, statementSummary, transactionsParsed } }
+  const [scanningIds, setScanningIds]   = useState({}); // { [sourceId]: true } while LLM is scanning
+  const [parsedStatements, setParsedStatements] = useState({}); // { [sourceId]: { transactions, summary } }
+  const [expandedStatements, setExpandedStatements] = useState({}); // { [sourceId]: true } expanded tx table
 
-  // Raw Data Noise Level State (Default: 60% noise -> > 40% noise triggers LLM activation)
+  // Raw Data Noise Level State — populated from the backend after a pipeline run
+  // (computed server-side from how many selected sources have an uploaded file)
   const [rawNoisePercent, setRawNoisePercent] = useState(60);
   const isLLMActiveForNoise = rawNoisePercent > 40;
 
@@ -23,6 +27,8 @@ export default function Page2Pipeline({
   const [isPipelineRunning, setIsPipelineRunning] = useState(false);
   const [pipelineStep, setPipelineStep] = useState(0); // 0 = idle, 1..5 = steps, 6 = done
   const [showProcessedTable, setShowProcessedTable] = useState(false);
+  const [processedTableRows, setProcessedTableRows] = useState([]);
+  const [storedFile, setStoredFile] = useState('processed_features_vector.csv');
 
   // Training state & ML Algorithm Selection
   const [selectedDatasetFile, setSelectedDatasetFile] = useState("processed_features_vector.csv");
@@ -30,8 +36,34 @@ export default function Page2Pipeline({
   const [isTrainingRunning, setIsTrainingRunning] = useState(false);
   const [trainingDone, setTrainingDone] = useState(false);
   const [visibleModelsCount, setVisibleModelsCount] = useState(0);
+  const [readyModelsList, setReadyModelsList] = useState([]);
+  const [realFeatures, setRealFeatures]       = useState(null);  // real extracted features
+  const [trainingTxCount, setTrainingTxCount] = useState(0);     // # transactions used
 
-  const selectedSources = DATA_SOURCES.filter(s => selectedIds.includes(s.id));
+  useEffect(() => {
+    api.get('/data-sources').then((data) => setAllSources(data.dataSources));
+    api.get('/pipeline/uploads').then((data) => setUploadedFiles(data.uploadedFiles || {}));
+    api.get('/pipeline/status').then((data) => {
+      if (data.pipeline.status === 'done') {
+        setPipelineStep(6);
+        setRawNoisePercent(data.pipeline.noisePercent);
+        setProcessedTableRows(data.pipeline.processedTable || []);
+        setShowProcessedTable(true);
+      }
+    });
+  }, []);
+
+  // Re-entering Model Hub after training already ran earlier in this
+  // session: restore the completed view instead of starting from scratch.
+  useEffect(() => {
+    if (trainedModels && trainedModels.length > 0) {
+      setReadyModelsList(trainedModels);
+      setVisibleModelsCount(trainedModels.length);
+      setTrainingDone(true);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const selectedSources = allSources.filter(s => selectedIds.includes(s.id));
 
   // 5 Process Steps
   const pipelineSteps = [
@@ -42,46 +74,6 @@ export default function Page2Pipeline({
     { id: 5, name: "5. Data Selection", desc: "Select high-variance predictor features" }
   ];
 
-  // Sample processed data rows
-  const processedTableRows = [
-    { id: "REC-001", adb: "₹1,850,000", gstDelta: "1.01", upiVelocity: "340 / day", cersai: "Clean (0)", normScore: "0.942", status: "Normalized" },
-    { id: "REC-002", adb: "₹2,100,000", gstDelta: "1.02", upiVelocity: "410 / day", cersai: "Clean (0)", normScore: "0.965", status: "Normalized" },
-    { id: "REC-003", adb: "₹1,450,000", gstDelta: "0.99", upiVelocity: "280 / day", cersai: "Clean (0)", normScore: "0.884", status: "Normalized" },
-    { id: "REC-004", adb: "₹3,200,000", gstDelta: "1.04", upiVelocity: "520 / day", cersai: "Clean (0)", normScore: "0.988", status: "Normalized" },
-    { id: "REC-005", adb: "₹1,750,000", gstDelta: "1.00", upiVelocity: "310 / day", cersai: "Clean (0)", normScore: "0.912", status: "Normalized" }
-  ];
-
-  const modelsList = [
-    {
-      id: "risk_model",
-      name: "Risk Model",
-      desc: "Evaluates credit risk & default probability.",
-      accuracy: "94.8%",
-      createdDate: "2026-08-25 16:30"
-    },
-    {
-      id: "cashflow_model",
-      name: "Cashflow Model",
-      desc: "Projects 12-month forward revenue & cash runway.",
-      accuracy: "92.4%",
-      createdDate: "2026-08-25 16:30"
-    },
-    {
-      id: "fraud_model",
-      name: "Fraud Model",
-      desc: "Detects anomalous transactions & duplicate pledges.",
-      accuracy: "98.9%",
-      createdDate: "2026-08-25 16:30"
-    },
-    {
-      id: "money_balance_model",
-      name: "Money Balance Model",
-      desc: "Evaluates daily balance stability & cash volatility.",
-      accuracy: "91.6%",
-      createdDate: "2026-08-25 16:30"
-    }
-  ];
-
   const versionOptions = [
     { value: "v3.4", label: "v3.4 (Current)" },
     { value: "v3.3", label: "v3.3 (Old)" },
@@ -90,40 +82,69 @@ export default function Page2Pipeline({
     { value: "v3.0", label: "v3.0 (Old)" }
   ];
 
-  const handleFileUpload = (id, fileName) => {
-    const ext = fileTypes[id] || "pdf";
-    setUploadedFiles(prev => ({
-      ...prev,
-      [id]: fileName || `${id}_dataset.${ext}`
-    }));
+  // Uploads the real file bytes to the backend, which runs the LLM vision
+  // scanner (Qwen2.5VL via Ollama) for PDFs and returns structured transactions.
+  const handleFileUpload = async (id, file) => {
+    setScanningIds(prev => ({ ...prev, [id]: true }));
+    setExpandedStatements(prev => ({ ...prev, [id]: false }));
+    try {
+      const formData = new FormData();
+      formData.append('sourceId', id);
+      formData.append('file', file);
+      const data = await api.postForm('/pipeline/uploads', formData);
+      setUploadedFiles(data.uploadedFiles);
+      if (data.statement) {
+        setParsedStatements(prev => ({ ...prev, [id]: data.statement }));
+        // Auto-expand if transactions were found
+        if (data.statement.transactions?.length > 0) {
+          setExpandedStatements(prev => ({ ...prev, [id]: true }));
+        }
+      }
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setScanningIds(prev => ({ ...prev, [id]: false }));
+    }
   };
 
-  const handleFileTypeChange = (id, type) => {
-    setFileTypes(prev => ({
-      ...prev,
-      [id]: type
-    }));
+  const handleVersionChange = async (modelId, version) => {
+    setSelectedVersionMap(prev => ({ ...prev, [modelId]: version }));
+    try {
+      const data = await api.put(`/models/${modelId}/version`, { version });
+      setSelectedVersionMap(data.selectedVersionMap);
+    } catch {
+      /* optimistic update already applied */
+    }
   };
 
-  const handleVersionChange = (modelId, version) => {
-    setSelectedVersionMap(prev => ({
-      ...prev,
-      [modelId]: version
-    }));
+  const handleDeploy = async (modelId) => {
+    try {
+      const data = await api.post(`/models/${modelId}/deploy`);
+      setDeployedStatusMap(data.deployedStatusMap);
+    } catch {
+      setDeployedStatusMap(prev => ({
+        ...prev,
+        [modelId]: prev[modelId] === "Deployed" ? "Ready" : "Deployed"
+      }));
+    }
   };
 
-  const handleDeploy = (modelId) => {
-    setDeployedStatusMap(prev => ({
-      ...prev,
-      [modelId]: prev[modelId] === "Deployed" ? "Ready" : "Deployed"
-    }));
-  };
-
-  // Run Process (Steps 1..5)
-  const startPipeline = () => {
+  // Run Process (Steps 1..5): fetch the real computed result from the
+  // backend first, then animate the 5-step tracker before revealing it.
+  const startPipeline = async () => {
     setIsPipelineRunning(true);
     setPipelineStep(1);
     setShowProcessedTable(false);
+
+    let result;
+    try {
+      result = await api.post('/pipeline/run', { selectedIds });
+    } catch (err) {
+      setIsPipelineRunning(false);
+      setPipelineStep(0);
+      alert(err.message);
+      return;
+    }
 
     let step = 1;
     const interval = setInterval(() => {
@@ -134,27 +155,48 @@ export default function Page2Pipeline({
         clearInterval(interval);
         setPipelineStep(6);
         setIsPipelineRunning(false);
+        setRawNoisePercent(result.pipeline.noisePercent);
+        setProcessedTableRows(result.pipeline.processedTable);
+        setStoredFile(result.storedFile);
         setShowProcessedTable(true);
       }
     }, 600);
   };
 
-  // Run Training on selected file & ML Algorithm
-  const startTraining = () => {
+  // Run Training on selected file & ML Algorithm: fetch real per-algorithm
+  // accuracy from the backend, then animate models revealing one by one.
+  const startTraining = async () => {
     setIsTrainingRunning(true);
     setVisibleModelsCount(0);
     setTrainingDone(false);
+    setRealFeatures(null);
+
+    let data;
+    try {
+      data = await api.post('/models/train', {
+        algorithm: selectedMLAlgorithm,
+        datasetFile: selectedDatasetFile,
+      });
+    } catch (err) {
+      setIsTrainingRunning(false);
+      alert(err.message);
+      return;
+    }
+
+    setReadyModelsList(data.models);
+    if (data.realFeatures) setRealFeatures(data.realFeatures);
+    if (data.txCount)      setTrainingTxCount(data.txCount);
 
     let modelCount = 0;
     const modelInterval = setInterval(() => {
       modelCount++;
       setVisibleModelsCount(modelCount);
 
-      if (modelCount >= modelsList.length) {
+      if (modelCount >= data.models.length) {
         clearInterval(modelInterval);
         setIsTrainingRunning(false);
         setTrainingDone(true);
-        setTrainedModels(modelsList);
+        setTrainedModels(data.models);
       }
     }, 600);
   };
@@ -179,13 +221,9 @@ export default function Page2Pipeline({
             1. Upload Data for Selected Sources ({selectedSources.length} Selected)
           </h2>
           <button
-            onClick={() => {
-              const mock = {};
-              selectedSources.forEach(s => {
-                const ext = fileTypes[s.id] || 'pdf';
-                mock[s.id] = `${s.id}_data.${ext}`;
-              });
-              setUploadedFiles(mock);
+            onClick={async () => {
+              const data = await api.post('/pipeline/uploads/autofill', { sourceIds: selectedIds });
+              setUploadedFiles(data.uploadedFiles);
             }}
             className="text-xs font-semibold text-purple-700 hover:underline"
           >
@@ -195,8 +233,8 @@ export default function Page2Pipeline({
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {selectedSources.map((source) => {
-            const fileName = uploadedFiles[source.id];
-            const currentFileType = fileTypes[source.id] || "pdf";
+            const upload = uploadedFiles[source.id];
+            const isScanning = !!scanningIds[source.id];
 
             return (
               <div key={source.id} className="p-4 border border-purple-100 rounded-xl bg-purple-50/50 space-y-3">
@@ -206,22 +244,147 @@ export default function Page2Pipeline({
 
                 <div className="flex items-center justify-between gap-3">
                   <div className="text-xs text-slate-500 font-mono truncate">
-                    {fileName ? fileName : 'No file uploaded'}
+                    {upload ? upload.fileName : 'No file uploaded'}
                   </div>
 
                   <label className="px-3.5 py-1.5 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20">
-                    <span>{fileName ? 'Change' : 'Upload'}</span>
+                    <span>{upload ? 'Change' : 'Upload'}</span>
                     <input
                       type="file"
                       className="hidden"
                       onChange={(e) => {
                         if (e.target.files?.[0]) {
-                          handleFileUpload(source.id, e.target.files[0].name);
+                          handleFileUpload(source.id, e.target.files[0]);
                         }
                       }}
                     />
                   </label>
                 </div>
+
+                {isScanning && (
+                  <div className="space-y-1.5">
+                    <div className="flex items-center space-x-2 text-[10px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
+                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      <span>Parsing PDF — text extraction, then AI vision if needed…</span>
+                    </div>
+                    <div className="text-[9px] text-slate-400 font-mono px-1">
+                      Digital PDFs finish in seconds · Scanned PDFs use Qwen2.5VL (may take ~30–60s)
+                    </div>
+                  </div>
+                )}
+
+                {!isScanning && upload && !upload.autoFilled && (() => {
+                  const stmt    = parsedStatements[source.id];
+                  const summary = upload.statementSummary || stmt?.summary;
+                  const txns    = stmt?.transactions || [];
+                  const isExpanded = !!expandedStatements[source.id];
+                  return (
+                    <div className="space-y-2">
+                      {/* File meta + cleanliness badge */}
+                      <div className="flex items-center justify-between text-[10px] font-mono">
+                        <span className="text-slate-500">
+                          {(upload.sizeBytes / 1024).toFixed(1)} KB &middot; .{upload.format}
+                        </span>
+                        <span className={`font-bold px-2 py-0.5 rounded-md border ${
+                          upload.cleanlinessPercent >= 60
+                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                            : 'bg-amber-50 text-amber-800 border-amber-200'
+                        }`}>
+                          Scanned: {upload.cleanlinessPercent}% clean
+                        </span>
+                      </div>
+
+                      {/* Real LLM-extracted summary stats */}
+                      {summary && (summary.transactionCount > 0) && (
+                        <div className="grid grid-cols-2 gap-1.5">
+                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Transactions</div>
+                            <div className="text-xs font-bold text-[#3b0764]">{summary.transactionCount}</div>
+                          </div>
+                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Total Debit</div>
+                            <div className="text-xs font-bold text-red-600">₹{(summary.totalDebit || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                          </div>
+                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Total Credit</div>
+                            <div className="text-xs font-bold text-emerald-600">₹{(summary.totalCredit || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
+                          </div>
+                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Closing Bal</div>
+                            <div className="text-xs font-bold text-slate-700">
+                              {summary.closingBalance != null ? `₹${summary.closingBalance.toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '—'}
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Expandable transaction table */}
+                      {txns.length > 0 && (
+                        <div>
+                          <button
+                            onClick={() => setExpandedStatements(prev => ({ ...prev, [source.id]: !isExpanded }))}
+                            className="w-full flex items-center justify-between text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 hover:bg-purple-100 transition-colors"
+                          >
+                            <span>📋 View {txns.length} Extracted Transactions</span>
+                            <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                          </button>
+
+                          {isExpanded && (
+                            <div className="mt-1.5 border border-purple-100 rounded-xl overflow-hidden">
+                              <div className="max-h-48 overflow-y-auto">
+                                <table className="w-full text-[9px] font-mono">
+                                  <thead className="bg-purple-50 sticky top-0">
+                                    <tr>
+                                      <th className="px-2 py-1.5 text-left text-[#3b0764] font-bold">Date</th>
+                                      <th className="px-2 py-1.5 text-left text-[#3b0764] font-bold">Narration</th>
+                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Type</th>
+                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Amount</th>
+                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Balance</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {txns.map((tx, i) => (
+                                      <tr key={i} className={`border-t border-purple-50 ${ i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
+                                        <td className="px-2 py-1 text-slate-500 whitespace-nowrap">{tx.date || '—'}</td>
+                                        <td className="px-2 py-1 text-slate-700 max-w-[120px] truncate" title={tx.narration}>{tx.narration}</td>
+                                        <td className="px-2 py-1 text-right">
+                                          <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                            tx.type === 'DEBIT'
+                                              ? 'bg-red-50 text-red-700'
+                                              : 'bg-emerald-50 text-emerald-700'
+                                          }`}>{tx.type}</span>
+                                        </td>
+                                        <td className={`px-2 py-1 text-right font-bold ${ tx.type === 'DEBIT' ? 'text-red-600' : 'text-emerald-600'}`}>
+                                          ₹{(tx.amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}
+                                        </td>
+                                        <td className="px-2 py-1 text-right text-slate-500">
+                                          {tx.balance != null ? `₹${tx.balance.toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '—'}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Error from LLM */}
+                      {stmt?.error && (
+                        <div className="text-[10px] font-mono text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                          ⚠ {stmt.error}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {!isScanning && upload?.autoFilled && (
+                  <div className="text-[10px] font-mono text-slate-400">
+                    Sample file (not scanned) &middot; assumed {upload.cleanlinessPercent}% clean
+                  </div>
+                )}
               </div>
             );
           })}
@@ -299,13 +462,17 @@ export default function Page2Pipeline({
               3. LLM Noise Inspection & Activation
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Raw Data Noise: <strong className="text-[#3b0764]">60%</strong> (Exceeds 40% Noise Threshold Limit)
+              Raw Data Noise: <strong className="text-[#3b0764]">{rawNoisePercent}%</strong> {isLLMActiveForNoise ? '(Exceeds 40% Noise Threshold Limit)' : '(Within Acceptable Threshold)'}
             </p>
           </div>
 
-          <div className="px-4 py-2 rounded-xl bg-purple-100 border border-purple-200 text-[#3b0764] text-xs font-mono font-bold shrink-0 flex items-center space-x-2">
-            <span className="w-2 h-2 rounded-full bg-purple-600 animate-pulse"></span>
-            <span>LLM Activated</span>
+          <div className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold shrink-0 flex items-center space-x-2 ${
+            isLLMActiveForNoise
+              ? 'bg-purple-100 border-purple-200 text-[#3b0764]'
+              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+          }`}>
+            <span className={`w-2 h-2 rounded-full animate-pulse ${isLLMActiveForNoise ? 'bg-purple-600' : 'bg-emerald-600'}`}></span>
+            <span>{isLLMActiveForNoise ? 'LLM Activated' : 'Direct Ingestion (Clean)'}</span>
           </div>
         </div>
       </div>
@@ -322,7 +489,7 @@ export default function Page2Pipeline({
             </div>
 
             <span className="text-xs font-mono font-bold px-3 py-1 bg-purple-50 border border-purple-200 rounded-lg text-[#3b0764]">
-              Stored File: processed_features_vector.csv
+              Stored File: {storedFile}
             </span>
           </div>
 
@@ -449,34 +616,74 @@ export default function Page2Pipeline({
               </p>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">
-              Generating: {visibleModelsCount} of {modelsList.length} Models
+              Generating: {visibleModelsCount} of {readyModelsList.length} Models
             </span>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            {modelsList.slice(0, visibleModelsCount).map((model) => (
+            {readyModelsList.slice(0, visibleModelsCount).map((model) => (
               <div
                 key={model.id}
                 className="p-4 rounded-xl border border-purple-100 bg-purple-50/40 space-y-2 transition-all duration-500 animate-fadeIn"
               >
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-sm text-[#3b0764]">{model.name}</h3>
-                  <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 border border-purple-200 rounded text-purple-900">
-                    {model.accuracy}
-                  </span>
+                  <div className="flex items-center gap-1">
+                    {model.realData && (
+                      <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded uppercase tracking-wide">LIVE</span>
+                    )}
+                    <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 border border-purple-200 rounded text-purple-900">
+                      {model.accuracy}
+                    </span>
+                  </div>
                 </div>
                 <p className="text-xs text-slate-500">{model.desc}</p>
                 <div className="text-[9px] font-mono text-purple-700 font-semibold">
                   Algorithm: {selectedMLAlgorithm.replace('_', ' ').toUpperCase()}
                 </div>
+                {model.cvFolds && (
+                  <div className="text-[9px] font-mono text-slate-400">
+                    {model.cvFolds}-fold CV · {model.sampleCount} samples
+                  </div>
+                )}
               </div>
             ))}
           </div>
+
+          {/* Real extracted features — shown after all models appear */}
+          {trainingDone && realFeatures && (
+            <div className="border-t border-purple-100 pt-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded uppercase">Real Data</span>
+                <span className="text-[10px] font-mono text-slate-500">
+                  Features extracted from {trainingTxCount} real transactions
+                </span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                {[
+                  { label: 'Avg Daily Bal', value: `₹${Math.round(realFeatures.avg_daily_balance).toLocaleString('en-IN')}` },
+                  { label: 'Credit/Debit', value: realFeatures.credit_debit_ratio?.toFixed(3) },
+                  { label: 'Bal Volatility', value: realFeatures.balance_volatility?.toFixed(4) },
+                  { label: 'TX Velocity', value: `${realFeatures.tx_velocity?.toFixed(2)}/day` },
+                  { label: 'Max Drawdown', value: `${(realFeatures.max_drawdown_pct * 100)?.toFixed(1)}%` },
+                  { label: 'Monthly Credit', value: `₹${Math.round(realFeatures.monthly_credit).toLocaleString('en-IN')}` },
+                  { label: 'Monthly Debit', value: `₹${Math.round(realFeatures.monthly_debit).toLocaleString('en-IN')}` },
+                  { label: 'Large TX %', value: `${(realFeatures.large_tx_pct * 100)?.toFixed(1)}%` },
+                  { label: 'Gap Score', value: realFeatures.irregular_gap_score?.toFixed(4) },
+                ].map(f => (
+                  <div key={f.label} className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                    <div className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">{f.label}</div>
+                    <div className="text-[11px] font-bold text-[#3b0764] font-mono">{f.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
       {/* 7. Model Version & Deployment Management Table */}
-      {(visibleModelsCount === modelsList.length || trainingDone) && (
+      {readyModelsList.length > 0 && (visibleModelsCount === readyModelsList.length || trainingDone) && (
         <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
@@ -502,7 +709,7 @@ export default function Page2Pipeline({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
-                {modelsList.map((model) => {
+                {readyModelsList.map((model) => {
                   const currentVer = selectedVersionMap[model.id] || "v3.4";
                   const currentStatus = deployedStatusMap[model.id] || "Ready";
 
@@ -559,7 +766,7 @@ export default function Page2Pipeline({
       )}
 
       {/* Footer Navigation */}
-      {visibleModelsCount === modelsList.length && (
+      {readyModelsList.length > 0 && visibleModelsCount === readyModelsList.length && (
         <div className="pt-6 border-t border-purple-200 flex justify-end">
           <button
             onClick={onNext}
