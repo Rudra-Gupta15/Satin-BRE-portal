@@ -1,20 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
-  Settings as SettingsIcon,
   Save,
-  Shield,
-  Sliders,
   Check,
-  Key,
   Search,
   ToggleLeft,
   ToggleRight,
   RotateCcw,
-  CheckCircle2,
-  AlertTriangle,
-  HelpCircle,
-  Filter,
-  Sparkles,
   Loader2
 } from 'lucide-react';
 import { api } from '../api/client';

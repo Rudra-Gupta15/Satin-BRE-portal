@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import SidebarNavbar from './components/SidebarNavbar';
 import OverviewDashboard from './components/OverviewDashboard';
 import Page1Selection from './components/Page1Selection';
@@ -16,7 +16,7 @@ export default function App() {
     try {
       const savedUser = localStorage.getItem('bre_user');
       return savedUser ? JSON.parse(savedUser) : { email: 'ABCD@gmail.com', name: 'Credit Manager' };
-    } catch (e) {
+    } catch {
       return { email: 'ABCD@gmail.com', name: 'Credit Manager' };
     }
   });
@@ -84,14 +84,14 @@ export default function App() {
     setUser(userData);
     try {
       localStorage.setItem('bre_user', JSON.stringify(userData));
-    } catch (e) {}
+    } catch { /* localStorage unavailable */ }
   };
 
   const handleLogout = () => {
     setUser(null);
     try {
       localStorage.removeItem('bre_user');
-    } catch (e) {}
+    } catch { /* localStorage unavailable */ }
     handleReset();
   };
 
@@ -157,7 +157,6 @@ export default function App() {
               trainedModels={trainedModels}
               selectedVersionMap={selectedVersionMap}
               deployedStatusMap={deployedStatusMap}
-              onNavigateBack={() => setActiveView('products')}
               onReprocessPipeline={() => setActiveView('model_hub')}
             />
           )}

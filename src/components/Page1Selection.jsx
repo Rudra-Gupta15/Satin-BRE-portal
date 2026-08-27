@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Check, ArrowRight, Layers, Plus, X, Sparkles, Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, ArrowRight, Plus, X, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 
 export default function Page1Selection({ selectedIds, setSelectedIds, onNext, onInspect }) {
@@ -101,7 +101,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
         </div>
       ) : (
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-        {sourcesList.map((source, index) => {
+        {sourcesList.map((source) => {
           const isSelected = selectedIds.includes(source.id);
 
           return (

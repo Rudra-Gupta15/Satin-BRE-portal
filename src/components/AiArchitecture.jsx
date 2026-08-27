@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ChevronDown,
   Database,
@@ -16,10 +16,6 @@ export default function AiArchitecture() {
 
   // Dropdown cleanliness percentage
   const [cleanlinessPercent, setCleanlinessPercent] = useState(60);
-  const isLLMActive = cleanlinessPercent < 60;
-
-  // Calculated noisy percentage (100 - cleanliness)
-  const noisyPercent = 100 - cleanlinessPercent;
 
   // vLLM Server Connection State
   const [vllmEnabled, setVllmEnabled] = useState(true);

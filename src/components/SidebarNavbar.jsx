@@ -1,4 +1,3 @@
-import React from 'react';
 import { RefreshCw, LogOut, User } from 'lucide-react';
 
 export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout }) {

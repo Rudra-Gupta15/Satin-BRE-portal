@@ -1,8 +1,7 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
-  Upload, ChevronDown, RefreshCw, CheckCircle2, ShieldCheck, AlertCircle,
-  FileText, ArrowUpRight, ArrowDownRight, Code, Table as TableIcon, Activity, Table,
-  BarChart3, Check, Loader2, Play, UserCheck, Building2, TrendingUp, CheckCircle, AlertTriangle
+  Upload, ChevronDown, RefreshCw, Code, Activity, Table,
+  BarChart3, Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
@@ -35,7 +34,6 @@ export default function Page3Inference({
   trainedModels = [],
   selectedVersionMap = {},
   deployedStatusMap = {},
-  onNavigateBack,
   onReprocessPipeline
 }) {
   const allModels = [
@@ -66,13 +64,17 @@ export default function Page3Inference({
   const [breLoading, setBreLoading] = useState(false);
   const [uploadingInput, setUploadingInput] = useState(false);
   const [inputUploadInfo, setInputUploadInfo] = useState('');
+  const [copiedPayload, setCopiedPayload] = useState(false);
 
   useEffect(() => {
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
-    // If a statement was already uploaded (this or the Model Hub page), show its name.
+    // If a statement was already uploaded (this or the Model Hub page), show its
+    // filename + the bank name read off it.
     api.get('/pipeline/uploads').then((data) => {
       const up = data?.uploadedFiles?.[selectedInputSourceId];
       if (up?.fileName) setInputFileName(up.fileName);
+      const b = up?.statementSummary?.bankName;
+      if (b) setCustomBankName((prev) => prev || b);
     }).catch(() => {});
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -140,10 +142,13 @@ export default function Page3Inference({
       form.append('file', file);
       const data = await api.postForm('/pipeline/uploads', form);
       setInputFileName(file.name);
-      const n = data?.statement?.summary?.transactionCount ?? 0;
+      const sum = data?.statement?.summary || {};
+      const n = sum.transactionCount ?? 0;
+      const bank = sum.bankName;
+      if (bank) setCustomBankName((prev) => prev || bank);
       if (n > 0) {
-        setInputUploadInfo(`${n} transactions parsed`);
-        await runInference(activeModelId, customId, customBankName, selectedInputSourceId);
+        setInputUploadInfo(`${n} transactions parsed${sum.accountHolder ? ` · ${sum.accountHolder}` : ''}`);
+        await runInference(activeModelId, customId, customBankName || bank || '', selectedInputSourceId);
       } else {
         setInputUploadInfo('No transactions could be read from this file');
       }
@@ -384,11 +389,13 @@ export default function Page3Inference({
           <h2 className="text-xl font-extrabold text-[#3b0764]">
             {customId.trim()
               ? `Statement — ${customId.trim()}`
-              : cleanStatementLabel(inputFileName)
-                ? `Statement — ${cleanStatementLabel(inputFileName)}`
-                : bundle?.dataSource === 'UPLOADED_STATEMENT'
-                  ? 'Uploaded Statement'
-                  : 'Statement Analysis'}
+              : (bundle?.statementLabel || bundle?.accountHolder)
+                ? `Statement — ${bundle.statementLabel || bundle.accountHolder}`
+                : cleanStatementLabel(inputFileName)
+                  ? `Statement — ${cleanStatementLabel(inputFileName)}`
+                  : bundle?.dataSource === 'UPLOADED_STATEMENT'
+                    ? 'Uploaded Statement'
+                    : 'Statement Analysis'}
           </h2>
           <span className="px-2.5 py-0.5 rounded-md bg-purple-100 border border-purple-200 text-[10px] font-extrabold font-mono text-purple-900">
             {isLoading ? 'ANALYZING' : 'ANALYZED'}
@@ -403,7 +410,7 @@ export default function Page3Inference({
             </span>
           )}
           <span className="text-xs text-slate-500 font-semibold">
-            {customBankName ? `${customBankName} - ` : ''}{transactionsList.length} transactions
+            {(customBankName || bundle?.bankName) ? `${customBankName || bundle.bankName} · ` : ''}{transactionsList.length} transactions
           </span>
         </div>
 
@@ -945,6 +952,25 @@ export default function Page3Inference({
                 <Code className="w-4 h-4 text-purple-700" />
                 BRE Output Payload (JSON)
               </h2>
+              <button
+                type="button"
+                onClick={() => {
+                  const text = JSON.stringify(brePayload, null, 2);
+                  navigator.clipboard?.writeText(text).then(
+                    () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
+                    () => {},
+                  );
+                }}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                  copiedPayload
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                    : 'bg-white border-purple-200 text-[#3b0764] hover:bg-purple-50'
+                }`}
+              >
+                {copiedPayload
+                  ? <><Check className="w-3.5 h-3.5" />Copied</>
+                  : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
+              </button>
             </div>
 
             <pre className="bg-purple-50/40 p-5 rounded-xl text-xs font-mono text-[#3b0764] overflow-x-auto border border-purple-200 shadow-xs font-bold leading-relaxed">

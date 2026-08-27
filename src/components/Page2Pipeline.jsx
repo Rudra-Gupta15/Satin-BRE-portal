@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { Check, ArrowRight, Play, RefreshCw, Loader2, ChevronDown, Table, FileText, Cpu, Download, Database, Rocket, Sparkles } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown } from 'lucide-react';
 import { api } from '../api/client';
 
 export default function Page2Pipeline({

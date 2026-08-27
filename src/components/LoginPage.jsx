@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Mail, Lock, Shield, Zap, Users, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { api } from '../api/client';
 
@@ -39,19 +39,6 @@ export default function LoginPage({ onLoginSuccess }) {
       setError(err.message);
       generateCaptcha();
       setCaptchaInput('');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleQuickLogin = async (role) => {
-    setError('');
-    setIsSubmitting(true);
-    try {
-      const data = await api.post('/auth/quick-login', { role });
-      onLoginSuccess(data.user);
-    } catch (err) {
-      setError(err.message);
     } finally {
       setIsSubmitting(false);
     }
