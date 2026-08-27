@@ -1,9 +1,12 @@
-// Thin fetch wrapper for the Backend API. Vite's dev server proxies
-// /api/* to http://localhost:4000 (see vite.config.js), so relative paths
-// work in both dev and a same-origin production deployment.
+// Thin fetch wrapper for the Backend API.
+//
+// In dev, Vite proxies /api/* to VITE_BACKEND_URL (see vite.config.js), so a
+// relative path is all we need. In a production build there's no proxy — set
+// VITE_BACKEND_URL to the backend's public URL and it's prepended here.
+const API_BASE = import.meta.env.DEV ? '' : (import.meta.env.VITE_BACKEND_URL || '');
 
 async function request(path, { method = 'GET', body, params } = {}) {
-  let url = `/api${path}`;
+  let url = `${API_BASE}/api${path}`;
   if (params) {
     const qs = new URLSearchParams(
       Object.entries(params).filter(([, v]) => v !== undefined && v !== null)
@@ -27,7 +30,7 @@ async function request(path, { method = 'GET', body, params } = {}) {
 }
 
 async function postForm(path, formData) {
-  const res = await fetch(`/api${path}`, { method: 'POST', body: formData });
+  const res = await fetch(`${API_BASE}/api${path}`, { method: 'POST', body: formData });
   const isJson = res.headers.get('content-type')?.includes('application/json');
   if (!isJson) {
     // Non-JSON response (e.g. proxy failure returning HTML) — never navigate, just throw
