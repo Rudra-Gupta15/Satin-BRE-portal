@@ -40,6 +40,7 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
             return (
               <button
                 key={item.id}
+                type="button"
                 onClick={() => setActiveView(item.id)}
                 className={`w-full px-4 py-3 rounded-2xl text-left transition-all cursor-pointer ${
                   isSelected
@@ -77,6 +78,7 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
         {/* Equal 50%-50% Width Reset & Logout Buttons */}
         <div className="grid grid-cols-2 gap-2">
           <button
+            type="button"
             onClick={onReset}
             title="Reset Selection"
             className="w-full py-2.5 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 text-[#3b0764] border border-purple-200 transition-colors text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
@@ -87,6 +89,7 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
 
           {onLogout && (
             <button
+              type="button"
               onClick={onLogout}
               title="Logout"
               className="w-full py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"

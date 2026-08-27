@@ -29,6 +29,11 @@ export default function Page2Pipeline({
   const [showProcessedTable, setShowProcessedTable] = useState(false);
   const [processedTableRows, setProcessedTableRows] = useState([]);
   const [storedFile, setStoredFile] = useState('processed_features_vector.csv');
+  const [stageLog, setStageLog] = useState([]); // [{ id, name, durationMs, detail }] — real per-stage results from the backend
+  const [selectedFeatures, setSelectedFeatures] = useState([]);
+  const [normalizeTable, setNormalizeTable] = useState([]);   // Stage 3: raw / MinMax / Z-score per feature
+  const [engineeredTable, setEngineeredTable] = useState([]); // Stage 4: derived temporal-ratio features
+  const [selectionTable, setSelectionTable] = useState([]);   // Stage 5: variance ranking + selected flag
 
   // Training state & ML Algorithm Selection
   const [selectedDatasetFile, setSelectedDatasetFile] = useState("processed_features_vector.csv");
@@ -92,8 +97,11 @@ export default function Page2Pipeline({
       formData.append('sourceId', id);
       formData.append('file', file);
       const data = await api.postForm('/pipeline/uploads', formData);
-      setUploadedFiles(data.uploadedFiles);
-      if (data.statement) {
+      // Guard: data or uploadedFiles may be null if the proxy/backend fails
+      if (data?.uploadedFiles) {
+        setUploadedFiles(data.uploadedFiles);
+      }
+      if (data?.statement) {
         setParsedStatements(prev => ({ ...prev, [id]: data.statement }));
         // Auto-expand if transactions were found
         if (data.statement.transactions?.length > 0) {
@@ -129,12 +137,19 @@ export default function Page2Pipeline({
     }
   };
 
-  // Run Process (Steps 1..5): fetch the real computed result from the
-  // backend first, then animate the 5-step tracker before revealing it.
+  // Run Process (Steps 1..5): the backend actually executes all 5 stages
+  // (cleaning, MinMax/Z-score normalization, feature engineering, variance-based
+  // selection) and returns each stage's real elapsed time + a description of
+  // what it did. We reveal steps in that real order, holding each on-screen for
+  // at least MIN_STEP_DISPLAY_MS so a sub-millisecond real computation is still
+  // visible — the delay is a UX floor, not fake work.
+  const MIN_STEP_DISPLAY_MS = 350;
+
   const startPipeline = async () => {
     setIsPipelineRunning(true);
     setPipelineStep(1);
     setShowProcessedTable(false);
+    setStageLog([]);
 
     let result;
     try {
@@ -146,21 +161,22 @@ export default function Page2Pipeline({
       return;
     }
 
-    let step = 1;
-    const interval = setInterval(() => {
-      step++;
-      if (step <= 5) {
-        setPipelineStep(step);
-      } else {
-        clearInterval(interval);
-        setPipelineStep(6);
-        setIsPipelineRunning(false);
-        setRawNoisePercent(result.pipeline.noisePercent);
-        setProcessedTableRows(result.pipeline.processedTable);
-        setStoredFile(result.storedFile);
-        setShowProcessedTable(true);
-      }
-    }, 600);
+    for (const stage of result.stages) {
+      await new Promise((resolve) => setTimeout(resolve, Math.max(stage.durationMs, MIN_STEP_DISPLAY_MS)));
+      setPipelineStep(stage.id);
+      setStageLog(prev => [...prev, stage]);
+    }
+
+    setPipelineStep(6);
+    setIsPipelineRunning(false);
+    setRawNoisePercent(result.pipeline.noisePercent);
+    setProcessedTableRows(result.pipeline.processedTable);
+    setStoredFile(result.storedFile);
+    setSelectedFeatures(result.selectedFeatures || []);
+    setNormalizeTable(result.normalizeTable || []);
+    setEngineeredTable(result.engineeredTable || []);
+    setSelectionTable(result.selectionTable || []);
+    setShowProcessedTable(true);
   };
 
   // Run Training on selected file & ML Algorithm: fetch real per-algorithm
@@ -223,7 +239,7 @@ export default function Page2Pipeline({
           <button
             onClick={async () => {
               const data = await api.post('/pipeline/uploads/autofill', { sourceIds: selectedIds });
-              setUploadedFiles(data.uploadedFiles);
+              if (data?.uploadedFiles) setUploadedFiles(data.uploadedFiles);
             }}
             className="text-xs font-semibold text-purple-700 hover:underline"
           >
@@ -247,15 +263,22 @@ export default function Page2Pipeline({
                     {upload ? upload.fileName : 'No file uploaded'}
                   </div>
 
-                  <label className="px-3.5 py-1.5 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20">
+                  <label
+                    className="px-3.5 py-1.5 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20"
+                    onClick={(e) => e.stopPropagation()}
+                  >
                     <span>{upload ? 'Change' : 'Upload'}</span>
                     <input
                       type="file"
                       className="hidden"
+                      tabIndex={-1}
                       onChange={(e) => {
-                        if (e.target.files?.[0]) {
-                          handleFileUpload(source.id, e.target.files[0]);
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleFileUpload(source.id, file);
                         }
+                        // Reset so the same file can be re-uploaded
+                        e.target.value = '';
                       }}
                     />
                   </label>
@@ -346,7 +369,7 @@ export default function Page2Pipeline({
                                     {txns.map((tx, i) => (
                                       <tr key={i} className={`border-t border-purple-50 ${ i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
                                         <td className="px-2 py-1 text-slate-500 whitespace-nowrap">{tx.date || '—'}</td>
-                                        <td className="px-2 py-1 text-slate-700 max-w-[120px] truncate" title={tx.narration}>{tx.narration}</td>
+                                        <td className="px-2 py-1 text-slate-700 max-w-30 truncate" title={tx.narration}>{tx.narration}</td>
                                         <td className="px-2 py-1 text-right">
                                           <span className={`px-1.5 py-0.5 rounded font-bold ${
                                             tx.type === 'DEBIT'
@@ -452,6 +475,29 @@ export default function Page2Pipeline({
             })}
           </div>
         </div>
+
+        {stageLog.length > 0 && (
+          <div className="mt-3 pt-3 border-t border-purple-100 space-y-1.5">
+            <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">Real Execution Log</span>
+            {stageLog.map((stage) => (
+              <div key={stage.id} className="flex items-start gap-2 text-[10px] font-mono">
+                <span className="text-emerald-600 font-bold shrink-0">✓</span>
+                <span className="text-slate-500 shrink-0">{stage.durationMs}ms</span>
+                <span className="text-slate-600">{stage.detail}</span>
+              </div>
+            ))}
+            {selectedFeatures.length > 0 && pipelineStep === 6 && (
+              <div className="flex items-center flex-wrap gap-1.5 pt-1.5">
+                <span className="text-[10px] font-mono text-slate-400 mr-1">Selected features:</span>
+                {selectedFeatures.map((f) => (
+                  <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-purple-50 border border-purple-200 rounded text-[#3b0764]">
+                    {f}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 3. LLM Noise Inspection & Activation Box */}
@@ -501,7 +547,7 @@ export default function Page2Pipeline({
                   <th className="py-2.5 px-3">ADB Score</th>
                   <th className="py-2.5 px-3">GST Delta</th>
                   <th className="py-2.5 px-3">UPI Velocity</th>
-                  <th className="py-2.5 px-3">CERSAI Status</th>
+                  <th className="py-2.5 px-3">Duplicate TXN Check</th>
                   <th className="py-2.5 px-3">Norm Score</th>
                   <th className="py-2.5 px-3">Status</th>
                 </tr>
@@ -516,7 +562,11 @@ export default function Page2Pipeline({
                     <td className="py-2 px-3">{row.cersai}</td>
                     <td className="py-2 px-3 font-semibold">{row.normScore}</td>
                     <td className="py-2 px-3">
-                      <span className="w-24 inline-block text-center py-0.5 rounded-md bg-purple-50 border border-purple-200 text-[10px] font-bold text-[#3b0764]">
+                      <span className={`w-32 inline-block text-center py-0.5 rounded-md text-[10px] font-bold ${
+                        row.status === 'Normalized'
+                          ? 'bg-purple-50 border border-purple-200 text-[#3b0764]'
+                          : 'bg-amber-50 border border-amber-200 text-amber-800'
+                      }`}>
                         {row.status}
                       </span>
                     </td>
@@ -528,14 +578,144 @@ export default function Page2Pipeline({
         </div>
       )}
 
-      {/* 5. Standalone Step 5: Model Training Process Card */}
+      {/* 5. Normalize Data Table (Stage 3: real MinMax scaling & Z-score standardization) */}
+      {showProcessedTable && normalizeTable.length > 0 && (
+        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-purple-100 pb-3">
+            <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 3 OUTPUT</span>
+            <h2 className="text-sm font-bold text-[#3b0764]">
+              5. Normalize Data — MinMax &amp; Z-Score per Feature
+            </h2>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+              Domain-bounded MinMax scaling to [0,1] and Z-score standardization against an assumed portfolio reference μ/σ.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Source</th>
+                  <th className="py-2.5 px-3">Feature</th>
+                  <th className="py-2.5 px-3 text-right">Raw Value</th>
+                  <th className="py-2.5 px-3 text-right">MinMax [0,1]</th>
+                  <th className="py-2.5 px-3 text-right">Z-Score</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {normalizeTable.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-purple-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-[#3b0764]">{row.sourceId}</td>
+                    <td className="py-2 px-3 text-slate-700">{row.feature}</td>
+                    <td className="py-2 px-3 text-right">{row.raw}</td>
+                    <td className="py-2 px-3 text-right font-semibold text-purple-900">{row.minmax}</td>
+                    <td className={`py-2 px-3 text-right font-semibold ${row.zscore >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {row.zscore >= 0 ? '+' : ''}{row.zscore}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Feature Engineering Table (Stage 4: real derived temporal-ratio features) */}
+      {showProcessedTable && engineeredTable.length > 0 && (
+        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-purple-100 pb-3">
+            <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 4 OUTPUT</span>
+            <h2 className="text-sm font-bold text-[#3b0764]">
+              6. Feature Engineering — Derived Temporal Ratios
+            </h2>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+              New variables computed from real monthly credit/debit &amp; average balance, beyond the base 9 extracted features.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Source</th>
+                  <th className="py-2.5 px-3">Engineered Feature</th>
+                  <th className="py-2.5 px-3 text-right">Value</th>
+                  <th className="py-2.5 px-3 text-right">MinMax [0,1]</th>
+                  <th className="py-2.5 px-3 text-right">Z-Score</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {engineeredTable.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-purple-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-[#3b0764]">{row.sourceId}</td>
+                    <td className="py-2 px-3 text-slate-700">{row.feature}</td>
+                    <td className="py-2 px-3 text-right">{row.value}</td>
+                    <td className="py-2 px-3 text-right font-semibold text-purple-900">{row.minmax}</td>
+                    <td className={`py-2 px-3 text-right font-semibold ${row.zscore >= 0 ? 'text-emerald-700' : 'text-rose-700'}`}>
+                      {row.zscore >= 0 ? '+' : ''}{row.zscore}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 7. Data Selection Table (Stage 5: real variance ranking) */}
+      {showProcessedTable && selectionTable.length > 0 && (
+        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-purple-100 pb-3">
+            <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 5 OUTPUT</span>
+            <h2 className="text-sm font-bold text-[#3b0764]">
+              7. Data Selection — High-Variance Feature Ranking
+            </h2>
+            <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+              All 11 candidate features ranked by variance (sklearn); top {selectedFeatures.length} selected for the stored feature vector.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Rank</th>
+                  <th className="py-2.5 px-3">Feature</th>
+                  <th className="py-2.5 px-3 text-right">Variance</th>
+                  <th className="py-2.5 px-3">Selected</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {selectionTable.map((row) => (
+                  <tr key={row.rank} className="hover:bg-purple-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-[#3b0764]">#{row.rank}</td>
+                    <td className="py-2 px-3 text-slate-700">{row.feature}</td>
+                    <td className="py-2 px-3 text-right">{row.variance === null ? '—' : row.variance}</td>
+                    <td className="py-2 px-3">
+                      <span className={`w-20 inline-block text-center py-0.5 rounded-md text-[10px] font-bold ${
+                        row.selected
+                          ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
+                          : 'bg-slate-50 border border-slate-200 text-slate-400'
+                      }`}>
+                        {row.selected ? 'Selected' : 'Dropped'}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* 8. Standalone: Model Training Process Card */}
       {showProcessedTable && (
         <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL SELECTION & TRAINING</span>
               <h2 className="text-sm font-bold text-[#3b0764]">
-                5. Model Training Process
+                8. Model Training Process
               </h2>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">
@@ -603,13 +783,13 @@ export default function Page2Pipeline({
         </div>
       )}
 
-      {/* 6. Generated Models Output Section */}
+      {/* 9. Generated Models Output Section */}
       {(visibleModelsCount > 0 || trainingDone) && (
         <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm transition-all duration-500 animate-fadeIn">
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <h2 className="text-sm font-bold text-[#3b0764]">
-                6. Generated Models Output
+                9. Generated Models Output
               </h2>
               <p className="text-[10px] text-slate-500 font-mono">
                 Trained using: <strong className="text-[#3b0764] uppercase">{selectedMLAlgorithm.replace('_', ' ')}</strong>
@@ -682,14 +862,14 @@ export default function Page2Pipeline({
         </div>
       )}
 
-      {/* 7. Model Version & Deployment Management Table */}
+      {/* 10. Model Version & Deployment Management Table */}
       {readyModelsList.length > 0 && (visibleModelsCount === readyModelsList.length || trainingDone) && (
         <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between border-b border-purple-100 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL REGISTRY & DEPLOYMENT</span>
               <h2 className="text-sm font-bold text-[#3b0764]">
-                7. Model Version & Deployment Management Table
+                10. Model Version & Deployment Management Table
               </h2>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">

@@ -208,16 +208,22 @@ export default function Page3Inference({
                 )}
               </select>
 
-              <label className="px-3.5 py-2 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20">
+              <label
+                className="px-3.5 py-2 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20"
+                onClick={(e) => e.stopPropagation()}
+              >
                 <Upload className="w-3.5 h-3.5" />
                 <span>Upload</span>
                 <input
                   type="file"
                   className="hidden"
+                  tabIndex={-1}
                   onChange={(e) => {
-                    if (e.target.files?.[0]) {
-                      setInputFileName(e.target.files[0].name);
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      setInputFileName(file.name);
                     }
+                    e.target.value = '';
                   }}
                 />
               </label>
@@ -274,6 +280,7 @@ export default function Page3Inference({
       {/* Run Analysis Button */}
       <div className="flex justify-end">
         <button
+          type="button"
           onClick={() => runInference(activeModelId, customId, customBankName, selectedInputSourceId)}
           disabled={isLoading}
           className={`px-6 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
@@ -320,6 +327,7 @@ export default function Page3Inference({
         </div>
 
         <button
+          type="button"
           onClick={onReprocessPipeline}
           className="px-4 py-2 rounded-xl bg-white hover:bg-purple-50 border border-purple-200 text-[#3b0764] text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
         >
@@ -341,6 +349,7 @@ export default function Page3Inference({
           return (
             <button
               key={tab.id}
+              type="button"
               onClick={() => setActiveTab(tab.id)}
               className={`pb-3 text-sm font-bold transition-all relative cursor-pointer whitespace-nowrap ${
                 isActive ? 'text-[#3b0764]' : 'text-slate-500 hover:text-purple-800'
@@ -532,6 +541,7 @@ export default function Page3Inference({
         <div className="space-y-6 animate-fadeIn">
           <div className="flex items-center justify-between">
             <button
+              type="button"
               onClick={handleRecomputeRiskScore}
               disabled={recomputing}
               className="px-4 py-2 rounded-xl bg-white hover:bg-purple-50 border border-purple-200 text-[#3b0764] text-xs font-bold shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"

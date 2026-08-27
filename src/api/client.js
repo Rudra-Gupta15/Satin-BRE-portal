@@ -29,7 +29,11 @@ async function request(path, { method = 'GET', body, params } = {}) {
 async function postForm(path, formData) {
   const res = await fetch(`/api${path}`, { method: 'POST', body: formData });
   const isJson = res.headers.get('content-type')?.includes('application/json');
-  const data = isJson ? await res.json() : null;
+  if (!isJson) {
+    // Non-JSON response (e.g. proxy failure returning HTML) — never navigate, just throw
+    throw new Error(`Upload failed: server returned a non-JSON response (${res.status}). Is the backend running?`);
+  }
+  const data = await res.json();
   if (!res.ok) {
     throw new Error(data?.error || `Request failed: POST ${path} (${res.status})`);
   }
