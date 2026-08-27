@@ -291,7 +291,7 @@ export default function Page2Pipeline({
                       <span>Parsing PDF — text extraction, then AI vision if needed…</span>
                     </div>
                     <div className="text-[9px] text-slate-400 font-mono px-1">
-                      Digital PDFs finish in seconds · Scanned PDFs use Qwen2.5VL (may take ~30–60s)
+                      Digital PDFs finish instantly · Scanned PDFs use Gemma 4 vision (~3–5s per page)
                     </div>
                   </div>
                 )}
