@@ -10,7 +10,7 @@ import {
 } from 'lucide-react';
 import { api } from '../api/client';
 
-export default function Settings() {
+export default function Settings({ hideHeader = false }) {
   const [categories, setCategories] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [enabledRules, setEnabledRules] = useState({});
@@ -102,41 +102,43 @@ export default function Settings() {
   };
 
   return (
-    <div className="space-y-6 pb-16 max-w-5xl mx-auto">
+    <div className="space-y-6 pb-4 w-full">
       
-      {/* Header Banner */}
-      <div className="bg-white p-6 rounded-2xl border border-purple-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <div className="inline-flex items-center space-x-2 bg-purple-50 border border-purple-200 px-3 py-1 rounded-full text-xs font-mono text-purple-900 font-bold mb-2">
-            <span>BRE Rule Engine Settings</span>
+      {/* Header Banner — hidden when rendered inside popup */}
+      {!hideHeader && (
+        <div className="bg-white p-6 rounded-2xl border border-purple-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <div className="inline-flex items-center space-x-2 bg-purple-50 border border-purple-200 px-3 py-1 rounded-full text-xs font-mono text-purple-900 font-bold mb-2">
+              <span>BRE Rule Engine Settings</span>
+            </div>
+            <h1 className="text-xl font-extrabold text-[#3b0764]">
+              Underwriting &amp; Decisioning Rules Configuration
+            </h1>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Configure all 15 Rule Categories and toggle individual risk signals for automated credit decisioning.
+            </p>
           </div>
-          <h1 className="text-xl font-extrabold text-[#3b0764]">
-            Underwriting & Decisioning Rules Configuration
-          </h1>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Configure all 15 Rule Categories and toggle individual risk signals for automated credit decisioning.
-          </p>
-        </div>
 
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={handleSave}
-            className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white transition-all flex items-center space-x-2 shadow-md shadow-purple-950/20 cursor-pointer"
-          >
-            {isSaved ? (
-              <>
-                <Check className="w-4 h-4 stroke-3 text-emerald-400" />
-                <span>Configuration Saved!</span>
-              </>
-            ) : (
-              <>
-                <Save className="w-4 h-4" />
-                <span>Save All Rules ({activeRulesCount} Active)</span>
-              </>
-            )}
-          </button>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={handleSave}
+              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white transition-all flex items-center space-x-2 shadow-md shadow-purple-950/20 cursor-pointer"
+            >
+              {isSaved ? (
+                <>
+                  <Check className="w-4 h-4 stroke-3 text-emerald-400" />
+                  <span>Configuration Saved!</span>
+                </>
+              ) : (
+                <>
+                  <Save className="w-4 h-4" />
+                  <span>Save All Rules ({activeRulesCount} Active)</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
-      </div>
+      )}
 
 
 

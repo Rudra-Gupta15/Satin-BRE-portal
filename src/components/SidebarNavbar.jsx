@@ -3,12 +3,12 @@ import { RefreshCw, LogOut, User } from 'lucide-react';
 export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout }) {
   // 6 Navigation Items for the Left Sidebar
   const sidebarItems = [
-    { id: 'overview', name: "Overview", desc: "Data Feeds & Vector Status" },
     { id: 'products', name: "Data Sources", desc: "Selected Data Feeds" },
     { id: 'model_hub', name: "Model Hub", desc: "Process Studio & Training" },
     { id: 'model_testing', name: "Model Testing", desc: "Inference & Risk Analytics" },
-    { id: 'ai_architecture', name: "AI Architecture", desc: "LLM Data Extraction Engine" },
-    { id: 'settings', name: "Settings", desc: "System & Threshold Config" },
+    { id: 'ai_architecture', name: "AI Intelligence", desc: "LLM Data Extraction Engine" },
+    { id: 'ml_security', name: "ML Security", desc: "Guardrails, Drift & Lineage" },
+
   ];
 
   return (
@@ -19,7 +19,7 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
         {/* Top Branding Card — SFL Training */}
         <div 
           className="w-full border border-purple-100 rounded-2xl bg-linear-to-b from-purple-50/60 to-white p-3.5 shadow-xs text-center space-y-1 hover:shadow-md transition-all cursor-pointer group"
-          onClick={() => setActiveView('overview')}
+          onClick={() => setActiveView('products')}
         >
           <span className="text-2.5xl font-black italic tracking-wider bg-linear-to-r from-rose-500 via-amber-500 to-purple-900 bg-clip-text text-transparent block group-hover:scale-105 transition-transform">
             SFL

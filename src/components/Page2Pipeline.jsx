@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, ArrowRight, Play, Loader2, ChevronDown } from 'lucide-react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown, BarChart3, RefreshCw } from 'lucide-react';
 import { api } from '../api/client';
 
 export default function Page2Pipeline({
@@ -44,6 +44,42 @@ export default function Page2Pipeline({
   const [readyModelsList, setReadyModelsList] = useState([]);
   const [realFeatures, setRealFeatures]       = useState(null);  // real extracted features
   const [trainingTxCount, setTrainingTxCount] = useState(0);     // # transactions used
+
+  // Model Evaluation (real 5-fold CV, computed at training time)
+  const [evalModelId, setEvalModelId] = useState("risk_model");
+  const [modelEval, setModelEval] = useState(null);
+  const [evalSummary, setEvalSummary] = useState(null);
+  const [reEvaluating, setReEvaluating] = useState(false);
+
+  // "0.923" -> "92.3%" · "56.9%" -> "56.9%" · numbers 0-1 -> "%"
+  const asPct = (v) => {
+    if (v == null) return '—';
+    if (typeof v === 'string' && v.trim().endsWith('%')) return v;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return String(v);
+    return `${(Math.abs(n) <= 1 ? n * 100 : n).toFixed(1)}%`;
+  };
+
+  const loadEvalSummary = () => {
+    api.get('/models/evaluation/summary').then(setEvalSummary).catch(() => {});
+  };
+  const loadEvaluation = (mid) => {
+    api.get('/models/evaluation', { model_id: mid }).then((d) => setModelEval(d.evaluation || null)).catch(() => {});
+    loadEvalSummary();
+  };
+  useEffect(() => { loadEvaluation(evalModelId); }, [evalModelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const reEvaluate = async () => {
+    setReEvaluating(true);
+    try {
+      const d = await api.post(`/models/evaluation/${evalModelId}/re-run`);
+      setModelEval(d.evaluation || null);
+    } catch (err) {
+      alert(err.message);
+    } finally {
+      setReEvaluating(false);
+    }
+  };
 
   useEffect(() => {
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
@@ -213,9 +249,11 @@ export default function Page2Pipeline({
         setIsTrainingRunning(false);
         setTrainingDone(true);
         setTrainedModels(data.models);
+        loadEvaluation(evalModelId);
       }
     }, 600);
   };
+
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
@@ -859,6 +897,146 @@ export default function Page2Pipeline({
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {/* 9b. Model Evaluation — real cross-validation accuracy (compact) */}
+      {(evalSummary?.sessionModels?.length > 0 || evalSummary?.datasetModel) && (
+        <div className="border border-purple-100 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h2 className="text-sm font-bold text-[#3b0764] flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-purple-700" /> Model Evaluation
+              <span className="text-[9px] font-mono text-slate-400 font-normal">real cross-validation</span>
+            </h2>
+            <div className="flex items-center gap-2">
+              {evalSummary.sessionTrainedAt && (
+                <span className="text-[9px] font-mono text-slate-400 hidden sm:inline">
+                  {evalSummary.sessionAlgorithm} · {new Date(evalSummary.sessionTrainedAt).toLocaleString()}
+                </span>
+              )}
+              <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
+                className="px-3 py-1.5 rounded-lg bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60">
+                {reEvaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                <span>{reEvaluating ? 'Evaluating…' : 'Re-evaluate'}</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="overflow-x-auto border border-purple-100 rounded-lg">
+            <table className="w-full text-left text-[11px] font-mono">
+              <thead className="bg-purple-50/70 text-[#3b0764] text-[9px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-1.5 px-3">Model</th>
+                  <th className="py-1.5 px-3 text-right">Accuracy</th>
+                  <th className="py-1.5 px-3 text-right">Precision</th>
+                  <th className="py-1.5 px-3 text-right">Recall</th>
+                  <th className="py-1.5 px-3 text-right">F1</th>
+                  <th className="py-1.5 px-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-50">
+                {evalSummary.sessionModels?.map((m) => {
+                  const sel = m.modelId === evalModelId;
+                  return (
+                    <tr key={m.modelId}
+                      onClick={() => setEvalModelId(m.modelId)}
+                      className={`cursor-pointer ${sel ? 'bg-purple-50/70' : 'hover:bg-purple-50/30'}`}>
+                      <td className="py-1.5 px-3 font-bold text-[#3b0764]">
+                        {sel && <span className="text-purple-500">▸ </span>}{m.name}
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.precision)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.recall)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.f1)}</td>
+                      <td className="py-1.5 px-3 text-right text-purple-400 text-[9px]">{sel ? 'shown below' : 'view'}</td>
+                    </tr>
+                  );
+                })}
+                {evalSummary.datasetModel && (
+                  <tr className="bg-emerald-50/50">
+                    <td className="py-1.5 px-3 font-bold text-[#3b0764]">
+                      Population Model <span className="text-[8px] bg-emerald-600 text-white px-1 py-0.5 rounded">v{evalSummary.datasetModel.version}</span>
+                      <span className="text-[9px] text-slate-400"> · {evalSummary.datasetModel.nSamples?.toLocaleString()} rows</span>
+                    </td>
+                    <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(evalSummary.datasetModel.accuracy)}</td>
+                    <td className="py-1.5 px-3 text-right">{asPct(evalSummary.datasetModel.precision)}</td>
+                    <td className="py-1.5 px-3 text-right">{asPct(evalSummary.datasetModel.recall)}</td>
+                    <td className="py-1.5 px-3 text-right">{asPct(evalSummary.datasetModel.f1)}</td>
+                    <td className="py-1.5 px-3"></td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Per-model detail — for the selected session model */}
+          {modelEval?.evalMetrics && (
+          <div className="space-y-2 border border-purple-100 rounded-lg bg-purple-50/20 p-2.5">
+            <div className="flex items-center justify-between">
+              <span className="text-[9px] font-mono font-bold text-purple-600 uppercase">
+                {evalSummary.sessionModels?.find((x) => x.modelId === evalModelId)?.name} — detail
+              </span>
+              {modelEval.evalMetrics.metricMeta?.cvTitle && (
+                <span className="text-[9px] font-mono text-emerald-700">{modelEval.evalMetrics.metricMeta.cvTitle}</span>
+              )}
+            </div>
+            {/* aggregate metric strip — R²/MSE/MAE etc. not in the main table */}
+            <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+              {[
+                { key: 'r2Score', fb: 'R² SCORE' },
+                { key: 'mse', fb: 'MSE' },
+                { key: 'mae', fb: 'MAE' },
+                { key: 'precision', fb: 'PRECISION', pct: true },
+                { key: 'recall', fb: 'RECALL', pct: true },
+                { key: 'f1Score', fb: 'F1 SCORE', pct: true },
+              ].map(({ key, fb, pct }) => {
+                const meta = modelEval.evalMetrics.metricMeta?.[key];
+                const raw = modelEval.evalMetrics[key];
+                return (
+                  <div key={key} className="rounded-lg bg-white border border-purple-100 px-2 py-1.5">
+                    <span className="text-[8px] font-mono font-bold text-slate-400 block truncate">{meta?.name || fb}</span>
+                    <span className="text-sm font-extrabold text-[#3b0764] font-mono block">{pct ? asPct(raw) : raw}</span>
+                  </div>
+                );
+              })}
+            </div>
+            {modelEval.cvFolds?.length > 0 && (
+            <div className="overflow-x-auto border border-purple-100 rounded-lg bg-white">
+              <table className="w-full text-left text-[10px] font-mono">
+                <thead className="text-[#3b0764] text-[9px] uppercase tracking-wider font-bold border-b border-purple-100">
+                  <tr>
+                    <th className="py-1 px-3">Fold</th><th className="py-1 px-3 text-right">R²</th>
+                    <th className="py-1 px-3 text-right">MSE</th><th className="py-1 px-3 text-right">Precision</th>
+                    <th className="py-1 px-3 text-right">Recall</th><th className="py-1 px-3 text-right">MAE</th>
+                    <th className="py-1 px-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-purple-50">
+                  {modelEval.cvFolds.map((f, i) => (
+                    <tr key={i}>
+                      <td className="py-1 px-3 font-bold text-[#3b0764]">{f.fold}</td>
+                      <td className="py-1 px-3 text-right">{f.r2}</td>
+                      <td className="py-1 px-3 text-right">{f.mse}</td>
+                      <td className="py-1 px-3 text-right text-emerald-700">{f.precision}</td>
+                      <td className="py-1 px-3 text-right text-emerald-700">{f.recall}</td>
+                      <td className="py-1 px-3 text-right">{f.mae}</td>
+                      <td className="py-1 px-3">
+                        <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
+                          f.status === 'PASSED' ? 'bg-emerald-100 text-emerald-800' : 'bg-amber-100 text-amber-900'
+                        }`}>{f.status}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            )}
+          </div>
+          )}
+
+          <p className="text-[9px] text-slate-400 font-mono">
+            Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). Click a model row to see its per-fold detail below.
+          </p>
         </div>
       )}
 

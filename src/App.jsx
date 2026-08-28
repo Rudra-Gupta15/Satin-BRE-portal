@@ -5,6 +5,7 @@ import Page1Selection from './components/Page1Selection';
 import Page2Pipeline from './components/Page2Pipeline';
 import Page3Inference from './components/Page3Inference';
 import AiArchitecture from './components/AiArchitecture';
+import SecurityDashboard from './components/SecurityDashboard';
 import Settings from './components/Settings';
 import DataDetailModal from './components/DataDetailModal';
 import LoginPage from './components/LoginPage';
@@ -22,7 +23,7 @@ export default function App() {
   });
 
   // Single active view state for Left Sidebar: 'overview' | 'products' | 'model_hub' | 'model_testing'
-  const [activeView, setActiveView] = useState('overview');
+  const [activeView, setActiveView] = useState('products');
 
   // Default: All 11 boxes UNSELECTED initially ([])
   const [selectedIds, setSelectedIds] = useState([]);
@@ -61,7 +62,7 @@ export default function App() {
   }, []);
 
   const handleReset = () => {
-    setActiveView('overview');
+    setActiveView('products');
     setSelectedIds([]); // Reset to all unselected
     setInspectedSource(null);
     setTrainedModels([]);
@@ -164,6 +165,11 @@ export default function App() {
           {/* 5. AI Architecture Specifications */}
           {activeView === 'ai_architecture' && (
             <AiArchitecture />
+          )}
+
+          {/* 5b. ML Security & Governance */}
+          {activeView === 'ml_security' && (
+            <SecurityDashboard />
           )}
 
           {/* 6. System Settings */}

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Upload, ChevronDown, RefreshCw, Code, Activity, Table,
-  BarChart3, Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
+  Upload, ChevronDown, RefreshCw, Code, Table,
+  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
@@ -59,7 +59,6 @@ export default function Page3Inference({
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [recomputing, setRecomputing] = useState(false);
-  const [evaluatingCV, setEvaluatingCV] = useState(false);
   const [breRun, setBreRun] = useState(null);
   const [breLoading, setBreLoading] = useState(false);
   const [uploadingInput, setUploadingInput] = useState(false);
@@ -120,15 +119,6 @@ export default function Page3Inference({
     runInference(activeModelId, customId, customBankName, selectedInputSourceId).finally(() => setRecomputing(false));
   };
 
-  const handleRunCrossValidation = async () => {
-    setEvaluatingCV(true);
-    try {
-      const data = await api.post(`/inference/evaluate/${activeModelId}`, { customId });
-      setBundle((prev) => (prev ? { ...prev, evaluation: data } : prev));
-    } finally {
-      setEvaluatingCV(false);
-    }
-  };
 
   // Real upload: send the file bytes to the backend parser (same endpoint the
   // Model Hub page uses), then immediately re-run inference on the parsed data.
@@ -181,8 +171,6 @@ export default function Page3Inference({
   const transactionsList = bundle?.transactions || [];
   const anomaliesList = bundle?.anomalies || [];
   const analytics = bundle?.analytics;
-  const evalMetrics = bundle?.evaluation?.evalMetrics;
-  const cvFolds = bundle?.evaluation?.cvFolds || [];
   const riskScore = bundle?.riskScore;
   const brePayload = bundle?.brePayload;
   const badgeBg = BADGE_STYLE_BY_MODEL[activeModelId] || 'bg-purple-900 text-white';
@@ -423,14 +411,13 @@ export default function Page3Inference({
         </button>
       </div>
 
-      {/* 6 Tabs Navigation Bar */}
+      {/* Tabs Navigation Bar */}
       <div className="border-b border-purple-200 flex space-x-5 overflow-x-auto">
         {[
           { id: 'transactions', label: 'Transactions' },
           { id: 'analytics', label: 'Analytics' },
           { id: 'risk_score', label: 'Credit Score' },
           { id: 'anomalies', label: 'Anomalies' },
-          { id: 'model_evaluation', label: 'Model Evaluation' },
           { id: 'bre_payload', label: 'BRE payload' },
         ].map((tab) => {
           const isActive = activeTab === tab.id;
@@ -641,21 +628,32 @@ export default function Page3Inference({
               <span className="text-3xl font-extrabold text-[#3b0764] font-mono block">{riskScore.score}</span>
               <span className="text-xs font-bold text-slate-700 block">Credit Score</span>
               <span className="text-[10px] text-emerald-800 font-semibold block">Range: 300 - 900 (Higher is Better)</span>
+              {riskScore.scorecardScore != null && (
+                <span className="text-[9px] text-slate-400 font-mono block pt-1 leading-tight">
+                  scorecard {riskScore.scorecardScore}
+                  {riskScore.mlBlended && riskScore.modelScore != null
+                    ? ` · model ${riskScore.modelScore} → blended`
+                    : ' (no model trained)'}
+                </span>
+              )}
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-2 flex flex-col justify-between">
               <div>
-                <span className={`px-3 py-1 rounded-lg border text-xs font-extrabold inline-block ${GRADE_BADGE_STYLE[riskScore.grade]}`}>
-                  {riskScore.grade} RISK
+                <span className={`px-3 py-1 rounded-lg border text-xs font-extrabold inline-block ${GRADE_BADGE_STYLE[riskScore.gradeRaw || riskScore.grade]}`}>
+                  {(riskScore.gradeRaw || riskScore.grade)} RISK
                 </span>
               </div>
-              <span className="text-xs font-bold text-slate-700 block">Risk Grade (Underwriting)</span>
+              <span className="text-xs font-bold text-slate-700 block">Risk Grade (3-tier band)</span>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-1">
               <span className="text-3xl font-extrabold text-emerald-700 font-mono block">{riskScore.pd}%</span>
               <span className="text-xs font-bold text-slate-700 block">Probability of Default (PD)</span>
-              <span className="text-[10px] text-emerald-800 font-semibold block">Underwriting Decision: {riskScore.decision}</span>
+              <span className={`text-[10px] font-extrabold block ${riskScore.decision === 'REJECTED' ? 'text-rose-700' : 'text-emerald-800'}`}>
+                Decision: {riskScore.decision}
+                {riskScore.gateRule && ` (gate: score > ${riskScore.gateRule.threshold})`}
+              </span>
             </div>
 
             <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-1 overflow-hidden">
@@ -823,123 +821,6 @@ export default function Page3Inference({
             </table>
           </div>
           )}
-        </div>
-      )}
-
-      {/* TAB 5: MODEL EVALUATION */}
-      {activeTab === 'model_evaluation' && evalMetrics && (
-        <div className="border border-purple-100 rounded-2xl p-6 bg-white space-y-6 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
-            <div>
-              <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL PERFORMANCE & CROSS VALIDATION</span>
-              <h2 className="text-lg font-bold text-[#3b0764] flex items-center gap-2">
-                <BarChart3 className="w-5 h-5 text-purple-700" />
-                Model Evaluation metrics for {activeModelObj.name}
-              </h2>
-            </div>
-
-            <button
-              onClick={handleRunCrossValidation}
-              disabled={evaluatingCV}
-              className="px-4 py-2 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold shadow-md transition-all cursor-pointer flex items-center space-x-1.5"
-            >
-              {evaluatingCV ? (
-                <>
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  <span>Evaluating 5 Folds...</span>
-                </>
-              ) : (
-                <>
-                  <Play className="w-3.5 h-3.5 fill-current" />
-                  <span>Re-evaluate Cross Validation</span>
-                </>
-              )}
-            </button>
-          </div>
-
-          {/* 6 Key Evaluation Metric Cards — labels adapt to the model's task
-              (classifier vs regressor vs anomaly detector) via metricMeta */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-3">
-            {[
-              { key: 'r2Score',   fallback: ['R² SCORE', 'Coefficient of Determination'], color: 'text-[#3b0764]' },
-              { key: 'mse',       fallback: ['MSE', 'Mean Squared Error'],                color: 'text-[#3b0764]' },
-              { key: 'precision', fallback: ['PRECISION', 'Positive Predictive Value'],   color: 'text-emerald-700' },
-              { key: 'recall',    fallback: ['RECALL', 'Sensitivity / True Positive'],    color: 'text-emerald-700' },
-              { key: 'mae',       fallback: ['MAE', 'Mean Absolute Error'],               color: 'text-[#3b0764]' },
-              { key: 'f1Score',   fallback: ['F1 SCORE', 'Harmonic Mean'],                color: 'text-purple-900' },
-            ].map(({ key, fallback, color }) => {
-              const meta = evalMetrics.metricMeta?.[key];
-              return (
-                <div key={key} className="p-4 rounded-xl bg-purple-50/60 border border-purple-100 space-y-1">
-                  <span className="text-[10px] font-mono font-bold text-slate-400 block">{meta?.name || fallback[0]}</span>
-                  <span className={`text-xl font-extrabold ${color} font-mono block`}>{evalMetrics[key]}</span>
-                  <span className="text-[9px] text-purple-700 font-semibold block">{meta?.sub || fallback[1]}</span>
-                </div>
-              );
-            })}
-          </div>
-
-          {evalMetrics.metricMeta && (
-            <p className="text-[10px] font-mono text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-1.5">
-              Real 5-fold cross-validation on the {activeModelObj.name} trained in Model Hub — estimator refit on each fold.
-            </p>
-          )}
-
-          {/* Cross Validation */}
-          <div className="space-y-3 pt-2">
-            <div className="flex items-center justify-between">
-              <div>
-                <h3 className="text-sm font-bold text-[#3b0764] flex items-center gap-1.5">
-                  <Activity className="w-4 h-4 text-purple-700" />
-                  {evalMetrics.metricMeta?.cvTitle || 'Cross Validation (5-Fold Stratified K-Fold) — Evaluate Our Model'}
-                </h3>
-                <p className="text-[11px] text-slate-500">
-                  Evaluates model stability across independent cross-validation subsets to check for overfitting.
-                </p>
-              </div>
-              <span className="px-3 py-1 bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg text-xs font-extrabold font-mono">
-                CV Mean {evalMetrics.metricMeta?.r2Score?.name || 'R²'}: {evalMetrics.r2Score}
-              </span>
-            </div>
-
-            <div className="overflow-x-auto border border-purple-100 rounded-xl">
-              <table className="w-full text-left text-xs font-mono">
-                <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
-                  <tr>
-                    <th className="py-2.5 px-3">CV Fold</th>
-                    <th className="py-2.5 px-3">R² Score</th>
-                    <th className="py-2.5 px-3">MSE</th>
-                    <th className="py-2.5 px-3">Precision</th>
-                    <th className="py-2.5 px-3">Recall</th>
-                    <th className="py-2.5 px-3">MAE</th>
-                    <th className="py-2.5 px-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-purple-100 bg-white">
-                  {cvFolds.map((foldRow, idx) => (
-                    <tr key={idx} className="hover:bg-purple-50/30 transition-colors text-slate-800">
-                      <td className="py-2.5 px-3 font-bold text-[#3b0764]">{foldRow.fold}</td>
-                      <td className="py-2.5 px-3 font-extrabold text-black">{foldRow.r2}</td>
-                      <td className="py-2.5 px-3">{foldRow.mse}</td>
-                      <td className="py-2.5 px-3 font-semibold text-emerald-700">{foldRow.precision}</td>
-                      <td className="py-2.5 px-3 font-semibold text-emerald-700">{foldRow.recall}</td>
-                      <td className="py-2.5 px-3">{foldRow.mae}</td>
-                      <td className="py-2.5 px-3">
-                        <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${
-                          foldRow.status === 'PASSED'
-                            ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-100 text-amber-900 border-amber-200'
-                        }`}>
-                          {foldRow.status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-
         </div>
       )}
 
