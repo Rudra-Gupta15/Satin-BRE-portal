@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Upload, ChevronDown, RefreshCw, Code, Table,
+  Upload, RefreshCw, Code, Table,
   Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
@@ -47,6 +47,9 @@ export default function Page3Inference({
   const deployedModels = modelsList.filter(m => deployedStatusMap[m.id] === "Deployed");
 
   const [allSources, setAllSources] = useState([]);
+  // Multi-select: which deployed models are in scope (default = all of them).
+  const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
+  // Which one's results are currently shown.
   const [selectedModelId, setSelectedModelId] = useState(deployedModels[0]?.id || "risk_model");
   const [inputFileName, setInputFileName] = useState("");
   const [selectedInputSourceId, setSelectedInputSourceId] = useState(selectedIds?.[0] || "account_aggregator");
@@ -64,36 +67,84 @@ export default function Page3Inference({
   const [uploadingInput, setUploadingInput] = useState(false);
   const [inputUploadInfo, setInputUploadInfo] = useState('');
   const [copiedPayload, setCopiedPayload] = useState(false);
+  // Results only appear after an actual test is run ON THIS PAGE (upload a file
+  // here, or press Run Analysis once a file is uploaded).
+  const [hasTested, setHasTested] = useState(false);
+  const [history, setHistory] = useState([]);
+  // When set, we're viewing a SAVED result from the history (read-only) rather
+  // than a live run.
+  const [viewingHistory, setViewingHistory] = useState(null); // { id, label } | null
+
+  const loadHistory = () =>
+    api.get('/inference/history').then((d) => setHistory(d.history || [])).catch(() => {});
+
+  const openHistoryEntry = async (row) => {
+    try {
+      const saved = await api.get(`/inference/history/${row.rowId}`);
+      setBundle(saved);
+      setHasTested(true);
+      setViewingHistory({ id: row.rowId, label: row.id });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch (err) {
+      setLoadError(err.message);
+    }
+  };
+
+  const exitHistoryView = () => {
+    setViewingHistory(null);
+    setHasTested(false);
+    setBundle(null);
+    setLoadError('');
+    loadHistory();
+  };
 
   useEffect(() => {
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
-    // If a statement was already uploaded (this or the Model Hub page), show its
-    // filename + the bank name read off it.
-    api.get('/pipeline/uploads').then((data) => {
-      const up = data?.uploadedFiles?.[selectedInputSourceId];
-      if (up?.fileName) setInputFileName(up.fileName);
-      const b = up?.statementSummary?.bankName;
-      if (b) setCustomBankName((prev) => prev || b);
-    }).catch(() => {});
+    loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedSources = allSources.filter(s => selectedIds.includes(s.id));
 
-  const activeModelId = deployedModels.some(m => m.id === selectedModelId)
-    ? selectedModelId
-    : (deployedModels[0]?.id || "risk_model");
+  // `selectedModelIds` stays null until the user first toggles — a null set
+  // means "all deployed models", i.e. everything is selected by default.
+  const chosenModelIds = selectedModelIds ?? deployedModels.map(m => m.id);
+  const isModelChosen = (id) => chosenModelIds.includes(id);
+  const toggleModelChosen = (id) => {
+    setSelectedModelIds((prev) => {
+      const base = prev ?? deployedModels.map(m => m.id);
+      if (base.includes(id)) {
+        if (base.length === 1) return base;            // keep at least one
+        const next = base.filter(x => x !== id);
+        if (id === selectedModelId) setSelectedModelId(next[0]); // move the view
+        return next;
+      }
+      return [...base, id];
+    });
+  };
+
+  // The model whose results are shown: the focused one if it's still chosen,
+  // else the first chosen, else the first deployed.
+  const activeModelId =
+    (isModelChosen(selectedModelId) && deployedModels.some(m => m.id === selectedModelId) && selectedModelId) ||
+    chosenModelIds.find(id => deployedModels.some(m => m.id === id)) ||
+    deployedModels[0]?.id ||
+    "risk_model";
 
   const activeModelObj = modelsList.find(m => m.id === activeModelId) || { name: "Risk Model" };
   const activeVersion = selectedVersionMap[activeModelId] || "v3.4";
 
-  const runInference = async (modelId, id, bank, sourceId) => {
+  // `record` = deliberate run (upload / Run Analysis) → append to test history.
+  const runInference = async (modelId, id, bank, sourceId, record = false) => {
     setIsLoading(true);
     setLoadError('');
     try {
       const data = await api.post('/inference/run', {
-        modelId, customId: (id || '').trim() || 'applicant', bankName: bank, sourceId,
+        modelId, customId: (id || '').trim() || 'applicant', bankName: bank, sourceId, record,
       });
       setBundle(data);
+      setHasTested(true);
+      setViewingHistory(null);
+      if (record) loadHistory();
     } catch (err) {
       setLoadError(err.message);
     } finally {
@@ -101,13 +152,16 @@ export default function Page3Inference({
     }
   };
 
-  // Re-run whenever the active model or input source changes (discrete events, no debounce needed).
+  // Re-run when the model or input source changes — but only once a test has
+  // actually been run on this page (never auto-run on first load, never while
+  // viewing a saved history entry).
   useEffect(() => {
-    runInference(activeModelId, customId, customBankName, selectedInputSourceId);
+    if (hasTested && !viewingHistory) runInference(activeModelId, customId, customBankName, selectedInputSourceId);
   }, [activeModelId, selectedInputSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Debounce customId/bankName text input so we don't fire a request per keystroke.
+  // Debounce customId/bankName edits — again, only after the first real run.
   useEffect(() => {
+    if (!hasTested || viewingHistory) return;
     const t = setTimeout(() => {
       runInference(activeModelId, customId, customBankName, selectedInputSourceId);
     }, 600);
@@ -120,8 +174,8 @@ export default function Page3Inference({
   };
 
 
-  // Real upload: send the file bytes to the backend parser (same endpoint the
-  // Model Hub page uses), then immediately re-run inference on the parsed data.
+  // Real upload for Model Testing ONLY — scope:'testing' keeps it in a slot
+  // completely separate from Model Hub's uploads / pipeline.
   const handleInputUpload = async (file) => {
     setUploadingInput(true);
     setInputUploadInfo('');
@@ -130,6 +184,7 @@ export default function Page3Inference({
       const form = new FormData();
       form.append('sourceId', selectedInputSourceId);
       form.append('file', file);
+      form.append('scope', 'testing');
       const data = await api.postForm('/pipeline/uploads', form);
       setInputFileName(file.name);
       const sum = data?.statement?.summary || {};
@@ -138,7 +193,7 @@ export default function Page3Inference({
       if (bank) setCustomBankName((prev) => prev || bank);
       if (n > 0) {
         setInputUploadInfo(`${n} transactions parsed${sum.accountHolder ? ` · ${sum.accountHolder}` : ''}`);
-        await runInference(activeModelId, customId, customBankName || bank || '', selectedInputSourceId);
+        await runInference(activeModelId, customId, customBankName || bank || '', selectedInputSourceId, true);
       } else {
         setInputUploadInfo('No transactions could be read from this file');
       }
@@ -194,8 +249,8 @@ export default function Page3Inference({
     <div className="space-y-6 max-w-5xl mx-auto">
 
       {/* Page Header */}
-      <div className="border-b border-purple-200 pb-4">
-        <h1 className="text-2xl font-extrabold text-[#3b0764]">
+      <div className="border-b border-slate-200 pb-4">
+        <h1 className="text-2xl font-extrabold text-slate-800">
           Model Testing: Model Selection & Results
         </h1>
         <p className="text-xs text-slate-600 mt-1">
@@ -209,57 +264,76 @@ export default function Page3Inference({
         </div>
       )}
 
-      {/* 1. TOP CONTROLS: 22% - 39% - 39% RATIO LAYOUT */}
+      {/* 1. TOP CONTROLS: 35% model list (left) | 65% column with Upload over App-ID (right) */}
       <div className="flex flex-col md:flex-row gap-3.5 items-stretch">
 
-        {/* Card 1: 22% Width */}
-        <div className="w-full md:w-[22%] shrink-0 border border-purple-100 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between">
+        {/* Card 1: Select Models — 35% */}
+        <div className="w-full md:w-[35%] shrink-0 border border-slate-200 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between">
           <div>
-            <label className="text-xs font-bold text-[#3b0764] block mb-1">
-              1. Select Model:
+            <label className="text-xs font-bold text-slate-800 block mb-1">
+              1. Select Models:
             </label>
-            <div className="relative">
-              {deployedModels.length > 0 ? (
-                <select
-                  value={activeModelId}
-                  onChange={(e) => setSelectedModelId(e.target.value)}
-                  className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-6 truncate"
-                >
-                  {deployedModels.map((m) => {
-                    const ver = selectedVersionMap[m.id] || "v3.4";
-                    return (
-                      <option key={m.id} value={m.id}>
-                        {m.name} ({ver})
-                      </option>
-                    );
-                  })}
-                </select>
-              ) : (
-                <div className="p-2 bg-purple-50 border border-purple-200 rounded-xl text-xs text-purple-800 font-semibold">
-                  No models deployed
-                </div>
-              )}
-              {deployedModels.length > 0 && (
-                <ChevronDown className="w-3.5 h-3.5 text-purple-500 absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none" />
-              )}
-            </div>
+            {deployedModels.length > 0 ? (
+              <div className="space-y-1.5">
+                {deployedModels.map((m) => {
+                  const ver = selectedVersionMap[m.id] || "v3.4";
+                  const chosen = isModelChosen(m.id);
+                  const focused = activeModelId === m.id;
+                  return (
+                    <div
+                      key={m.id}
+                      onClick={() => { toggleModelChosen(m.id); if (!chosen) setSelectedModelId(m.id); }}
+                      className={`w-full flex items-center gap-2 px-2.5 py-2 rounded-xl border transition-colors cursor-pointer ${
+                        focused
+                          ? 'border-[#ea580c] bg-orange-50/60'
+                          : chosen
+                            ? 'border-slate-200 bg-white hover:bg-slate-50'
+                            : 'border-slate-200 bg-slate-50/50 hover:bg-slate-50 opacity-60'
+                      }`}
+                    >
+                      <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${
+                        chosen ? 'bg-[#ea580c] border-[#ea580c] text-white' : 'border-slate-300 bg-white'
+                      }`}>
+                        {chosen && <Check className="w-3 h-3 stroke-3" />}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); if (!chosen) toggleModelChosen(m.id); setSelectedModelId(m.id); }}
+                        className="min-w-0 flex-1 flex items-center justify-between gap-2 text-left"
+                        title="View this model's results"
+                      >
+                        <span className="text-xs font-semibold text-slate-800 truncate">{m.name}</span>
+                        <span className="text-[10px] text-slate-400 font-mono shrink-0">{ver}</span>
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-purple-800 font-semibold">
+                No models deployed
+              </div>
+            )}
           </div>
           <span className="text-[10px] font-mono text-slate-500 block truncate mt-1">
-            <strong className="text-[#3b0764]">{deployedModels.length}</strong> model(s) deployed
+            <strong className="text-slate-800">{chosenModelIds.length}</strong> of {deployedModels.length} selected
           </span>
         </div>
 
-        {/* Card 2: 39% Width */}
-        <div className="w-full md:w-[39%] shrink-0 border border-purple-100 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between">
+        {/* Right column — 65%, Upload over App-ID */}
+        <div className="w-full md:w-[65%] flex flex-col gap-3.5">
+
+        {/* Card 2: Upload Input Data */}
+        <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between md:flex-1">
           <div>
-            <label className="text-xs font-bold text-[#3b0764] block mb-1">
+            <label className="text-xs font-bold text-slate-800 block mb-1">
               2. Upload Input Data:
             </label>
             <div className="flex items-center space-x-1.5">
               <select
                 value={selectedInputSourceId}
                 onChange={(e) => setSelectedInputSourceId(e.target.value)}
-                className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-6 truncate"
+                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-6 truncate"
               >
                 {selectedSources.length > 0 ? selectedSources.map((s) => (
                   <option key={s.id} value={s.id}>
@@ -271,8 +345,8 @@ export default function Page3Inference({
               </select>
 
               <label
-                className={`px-3.5 py-2 rounded-xl text-white text-xs font-bold shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20 ${
-                  uploadingInput ? 'bg-slate-400 cursor-not-allowed' : 'bg-[#3b0764] hover:bg-purple-900 cursor-pointer'
+                className={`px-3.5 py-2 rounded-xl text-white text-xs font-bold shrink-0 flex items-center space-x-1 shadow-md shadow-orange-900/15 ${
+                  uploadingInput ? 'bg-slate-400 cursor-not-allowed' : 'btn-orange cursor-pointer'
                 }`}
                 onClick={(e) => e.stopPropagation()}
               >
@@ -296,16 +370,16 @@ export default function Page3Inference({
           </div>
           <span className="text-[10px] text-slate-500 block font-mono truncate mt-1">
             {inputFileName
-              ? <>File: <strong className="text-[#3b0764]">{inputFileName}</strong></>
+              ? <>File: <strong className="text-slate-800">{inputFileName}</strong></>
               : 'No file uploaded yet'}
             {inputUploadInfo && <span className="text-emerald-700"> · {inputUploadInfo}</span>}
           </span>
         </div>
 
-        {/* Card 3: 39% Width */}
-        <div className="w-full md:w-[39%] shrink-0 border border-purple-100 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between">
+        {/* Card 3: Application ID & Bank Name */}
+        <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-2 shadow-sm flex flex-col justify-between md:flex-1">
           <div>
-            <label className="text-xs font-bold text-[#3b0764] block mb-1">
+            <label className="text-xs font-bold text-slate-800 block mb-1">
               3. Application ID & Bank Name (Optional):
             </label>
             <div className="grid grid-cols-2 gap-2">
@@ -319,7 +393,7 @@ export default function Page3Inference({
                   value={customId}
                   onChange={(e) => setCustomId(e.target.value)}
                   placeholder="e.g. LOAN-2026-0042"
-                  className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600"
+                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c]"
                 />
               </div>
 
@@ -333,7 +407,7 @@ export default function Page3Inference({
                   value={customBankName}
                   onChange={(e) => setCustomBankName(e.target.value)}
                   placeholder="e.g. HDFC Bank"
-                  className="w-full bg-purple-50/50 border border-purple-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600"
+                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c]"
                 />
               </div>
             </div>
@@ -343,18 +417,26 @@ export default function Page3Inference({
           </span>
         </div>
 
+        </div>
       </div>
 
       {/* Run Analysis Button */}
-      <div className="flex justify-end">
+      <div className="flex items-center justify-end gap-3">
+        {!inputFileName && (
+          <span className="text-[11px] text-slate-400 font-medium">
+            Upload a statement above to test it
+          </span>
+        )}
         <button
           type="button"
-          onClick={() => runInference(activeModelId, customId, customBankName, selectedInputSourceId)}
-          disabled={isLoading}
+          onClick={() => {
+            if (inputFileName) runInference(activeModelId, customId, customBankName, selectedInputSourceId, true);
+          }}
+          disabled={isLoading || !inputFileName}
           className={`px-6 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
-            isLoading
+            isLoading || !inputFileName
               ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-              : 'bg-[#3b0764] text-white hover:bg-purple-900 shadow-purple-950/20 cursor-pointer'
+              : 'btn-orange text-white shadow-orange-900/15 cursor-pointer'
           }`}
         >
           {isLoading ? (
@@ -365,16 +447,35 @@ export default function Page3Inference({
           ) : (
             <>
               <Play className="w-3.5 h-3.5 fill-current" />
-              <span>{bundle ? 'Re-run Analysis' : 'Run Analysis'}</span>
+              <span>{hasTested ? 'Re-run Analysis' : 'Run Analysis'}</span>
             </>
           )}
         </button>
       </div>
 
+      {hasTested && (
+      <>
+      {/* ── results ── */}
+
+      {viewingHistory && (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-purple-200 bg-purple-50/60 px-4 py-2.5">
+          <span className="text-xs font-semibold text-purple-900">
+            Viewing saved result — <strong>{viewingHistory.label}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={exitHistoryView}
+            className="text-xs font-bold text-purple-700 hover:underline cursor-pointer"
+          >
+            ← Back to history
+          </button>
+        </div>
+      )}
+
       {/* Statement Header & Reprocess Button Row */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
         <div className="flex items-center space-x-3 flex-wrap gap-y-1">
-          <h2 className="text-xl font-extrabold text-[#3b0764]">
+          <h2 className="text-xl font-extrabold text-slate-800">
             {customId.trim()
               ? `Statement — ${customId.trim()}`
               : (bundle?.statementLabel || bundle?.accountHolder)
@@ -385,7 +486,7 @@ export default function Page3Inference({
                     ? 'Uploaded Statement'
                     : 'Statement Analysis'}
           </h2>
-          <span className="px-2.5 py-0.5 rounded-md bg-purple-100 border border-purple-200 text-[10px] font-extrabold font-mono text-purple-900">
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-extrabold font-mono text-purple-900">
             {isLoading ? 'ANALYZING' : 'ANALYZED'}
           </span>
           {bundle && (
@@ -405,17 +506,46 @@ export default function Page3Inference({
         <button
           type="button"
           onClick={onReprocessPipeline}
-          className="px-4 py-2 rounded-xl bg-white hover:bg-purple-50 border border-purple-200 text-[#3b0764] text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+          className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
         >
           Reprocess process
         </button>
       </div>
 
-      {/* Tabs Navigation Bar */}
-      <div className="border-b border-purple-200 flex space-x-5 overflow-x-auto">
+      {/* Tabs Navigation Bar — selected models replace the old "Analytics" tab.
+          Clicking a model shows that model's output; the remaining tabs are the
+          other views of that model's result. */}
+      <div className="border-b border-slate-200 flex space-x-5 overflow-x-auto">
+        {(viewingHistory
+          ? [{ id: bundle?.model?.id || activeModelId, name: bundle?.model?.name || 'Model', version: bundle?.model?.version }]
+          : chosenModelIds.map((mid) => {
+              const m = modelsList.find((x) => x.id === mid) || { id: mid, name: mid };
+              return { id: mid, name: m.name, version: selectedVersionMap[mid] || 'v3.4' };
+            })
+        ).map((m) => {
+          const isActive = activeTab === 'analytics' && (viewingHistory || activeModelId === m.id);
+          return (
+            <button
+              key={m.id}
+              type="button"
+              disabled={!!viewingHistory}
+              onClick={() => { if (!viewingHistory) { setSelectedModelId(m.id); setActiveTab('analytics'); } }}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap ${
+                viewingHistory ? 'cursor-default' : 'cursor-pointer'
+              } ${isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'}`}
+            >
+              {m.name} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {isActive && (
+                <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />
+              )}
+            </button>
+          );
+        })}
+
+        <span className="w-px bg-slate-200 my-1 shrink-0" aria-hidden />
+
         {[
           { id: 'transactions', label: 'Transactions' },
-          { id: 'analytics', label: 'Analytics' },
           { id: 'risk_score', label: 'Credit Score' },
           { id: 'anomalies', label: 'Anomalies' },
           { id: 'bre_payload', label: 'BRE payload' },
@@ -427,7 +557,7 @@ export default function Page3Inference({
               type="button"
               onClick={() => setActiveTab(tab.id)}
               className={`pb-3 text-sm font-bold transition-all relative cursor-pointer whitespace-nowrap ${
-                isActive ? 'text-[#3b0764]' : 'text-slate-500 hover:text-purple-800'
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
               }`}
             >
               {tab.label}
@@ -450,16 +580,16 @@ export default function Page3Inference({
       <>
       {/* TAB 1: TRANSACTIONS */}
       {activeTab === 'transactions' && (
-        <div className="border border-purple-100 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
-            <h2 className="text-base font-bold text-[#3b0764]">
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-800">
               Transactions ({transactionsList.length})
             </h2>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/70 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/70 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Narration</th>
@@ -469,14 +599,14 @@ export default function Page3Inference({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {transactionsList.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-purple-50/40 text-slate-800 transition-colors">
+                  <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
                     <td className="py-3 px-4 text-slate-600 font-semibold">{row.date}</td>
-                    <td className="py-3 px-4 font-bold text-[#3b0764]">{row.narration}</td>
+                    <td className="py-3 px-4 font-bold text-slate-800">{row.narration}</td>
                     <td className="py-3 px-4">
                       <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold ${
                         row.type === 'CREDIT'
                           ? 'bg-emerald-100 text-emerald-800 border border-emerald-200'
-                          : 'bg-purple-100 text-purple-900 border border-purple-200'
+                          : 'bg-slate-100 text-purple-900 border border-slate-200'
                       }`}>
                         {row.type}
                       </span>
@@ -492,11 +622,11 @@ export default function Page3Inference({
 
       {/* TAB 2: ANALYTICS (DYNAMIC GRAPH & TABLE PER SELECTED MODEL) */}
       {activeTab === 'analytics' && analytics && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-5 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-5 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <span className="text-[10px] font-mono uppercase text-purple-600 font-bold block">MODEL OUTPUT RESULT</span>
-              <h2 className="text-lg font-bold text-[#3b0764]">
+              <h2 className="text-lg font-bold text-slate-800">
                 {activeModelObj.name} Output
               </h2>
             </div>
@@ -516,7 +646,7 @@ export default function Page3Inference({
               {analytics.chartTitle}
             </h3>
 
-            <div className="h-64 w-full bg-purple-50/40 border border-purple-100 rounded-xl p-4">
+            <div className="h-64 w-full bg-slate-50/40 border border-slate-200 rounded-xl p-4">
               <ResponsiveContainer width="100%" height="100%">
                 {analytics.chartType === 'area' ? (
                   <AreaChart data={analytics.chart}>
@@ -560,7 +690,7 @@ export default function Page3Inference({
 
           <div className="space-y-3 pt-2">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-[#3b0764] flex items-center gap-1.5">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
                 <Table className="w-4 h-4 text-purple-700" />
                 {analytics.dataSource === 'UPLOADED_STATEMENT'
                   ? `Month-by-Month ${activeModelObj.name} Numerical Table (from your statement)`
@@ -571,9 +701,9 @@ export default function Page3Inference({
               </span>
             </div>
 
-            <div className="overflow-x-auto border border-purple-100 rounded-xl">
+            <div className="overflow-x-auto border border-slate-200 rounded-xl">
               <table className="w-full text-left text-xs font-mono">
-                <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+                <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                   <tr>
                     {analytics.tableColumns.map((col, idx) => (
                       <th key={idx} className="py-2.5 px-3">{col}</th>
@@ -582,8 +712,8 @@ export default function Page3Inference({
                 </thead>
                 <tbody className="divide-y divide-purple-100 bg-white">
                   {analytics.tableRows.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-purple-50/30 transition-colors text-slate-800">
-                      <td className="py-2 px-3 font-bold text-[#3b0764]">{row.col1}</td>
+                    <tr key={idx} className="hover:bg-slate-50/30 transition-colors text-slate-800">
+                      <td className="py-2 px-3 font-bold text-slate-800">{row.col1}</td>
                       <td className="py-2 px-3 font-extrabold text-emerald-700">{row.col2}</td>
                       <td className="py-2 px-3 font-bold text-black">{row.col3}</td>
                       <td className="py-2 px-3">{row.col4}</td>
@@ -611,21 +741,21 @@ export default function Page3Inference({
               type="button"
               onClick={handleRecomputeRiskScore}
               disabled={recomputing}
-              className="px-4 py-2 rounded-xl bg-white hover:bg-purple-50 border border-purple-200 text-[#3b0764] text-xs font-bold shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
+              className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-xs transition-colors cursor-pointer flex items-center space-x-1.5"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${recomputing ? 'animate-spin' : ''}`} />
               <span>Recompute score</span>
             </button>
 
-            <span className="text-xs font-bold text-purple-900 bg-purple-100 px-3 py-1 rounded-xl border border-purple-200">
+            <span className="text-xs font-bold text-purple-900 bg-slate-100 px-3 py-1 rounded-xl border border-slate-200">
               Active Model: {activeModelObj.name} ({activeVersion})
             </span>
           </div>
 
           {/* 4 Clean Top Metric Cards */}
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-1">
-              <span className="text-3xl font-extrabold text-[#3b0764] font-mono block">{riskScore.score}</span>
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-1">
+              <span className="text-3xl font-extrabold text-slate-800 font-mono block">{riskScore.score}</span>
               <span className="text-xs font-bold text-slate-700 block">Credit Score</span>
               <span className="text-[10px] text-emerald-800 font-semibold block">Range: 300 - 900 (Higher is Better)</span>
               {riskScore.scorecardScore != null && (
@@ -638,7 +768,7 @@ export default function Page3Inference({
               )}
             </div>
 
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-2 flex flex-col justify-between">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-2 flex flex-col justify-between">
               <div>
                 <span className={`px-3 py-1 rounded-lg border text-xs font-extrabold inline-block ${GRADE_BADGE_STYLE[riskScore.gradeRaw || riskScore.grade]}`}>
                   {(riskScore.gradeRaw || riskScore.grade)} RISK
@@ -647,7 +777,7 @@ export default function Page3Inference({
               <span className="text-xs font-bold text-slate-700 block">Risk Grade (3-tier band)</span>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-1">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-1">
               <span className="text-3xl font-extrabold text-emerald-700 font-mono block">{riskScore.pd}%</span>
               <span className="text-xs font-bold text-slate-700 block">Probability of Default (PD)</span>
               <span className={`text-[10px] font-extrabold block ${riskScore.decision === 'REJECTED' ? 'text-rose-700' : 'text-emerald-800'}`}>
@@ -656,8 +786,8 @@ export default function Page3Inference({
               </span>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-1 overflow-hidden">
-              <span className="text-sm font-extrabold text-[#3b0764] block truncate">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-1 overflow-hidden">
+              <span className="text-sm font-extrabold text-slate-800 block truncate">
                 {activeModelObj.name}
               </span>
               <span className="text-xs font-bold text-purple-700 block">
@@ -671,8 +801,8 @@ export default function Page3Inference({
 
           {/* Positive Drivers & Risk Warnings (derived from the live feature vector) */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-3">
-              <h3 className="text-xs font-bold text-[#3b0764] flex items-center gap-1.5 border-b border-purple-100 pb-2">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-200 pb-2">
                 <CheckCircle className="w-4 h-4 text-emerald-600" />
                 Positive Drivers
               </h3>
@@ -688,8 +818,8 @@ export default function Page3Inference({
               </ul>
             </div>
 
-            <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-3">
-              <h3 className="text-xs font-bold text-[#3b0764] flex items-center gap-1.5 border-b border-purple-100 pb-2">
+            <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5 border-b border-slate-200 pb-2">
                 <AlertTriangle className="w-4 h-4 text-amber-600" />
                 Risk Monitoring Alerts
               </h3>
@@ -707,8 +837,8 @@ export default function Page3Inference({
           </div>
 
           {/* Feature Vector Table */}
-          <div className="p-5 rounded-2xl bg-white border border-purple-100 shadow-sm space-y-3">
-            <h3 className="text-xs font-bold text-[#3b0764] border-b border-purple-100 pb-2">
+          <div className="p-5 rounded-2xl bg-white border border-slate-200 shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-slate-800 border-b border-slate-200 pb-2">
               Feature Vector Breakdown ({activeModelObj.name})
             </h3>
             {(() => {
@@ -765,10 +895,10 @@ export default function Page3Inference({
 
       {/* TAB 4: ANOMALIES (EXPLICIT % PROBABILITY DISPLAY) */}
       {activeTab === 'anomalies' && (
-        <div className="border border-purple-100 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
-              <h2 className="text-base font-bold text-[#3b0764]">
+              <h2 className="text-base font-bold text-slate-800">
                 Anomalies detected ({anomaliesList.length})
               </h2>
               <p className="text-[11px] text-slate-500">
@@ -780,15 +910,15 @@ export default function Page3Inference({
           {anomaliesList.length === 0 ? (
             <div className="py-10 flex flex-col items-center justify-center text-center gap-2">
               <CheckCircle className="w-8 h-8 text-emerald-600" />
-              <p className="text-sm font-bold text-[#3b0764]">No anomalies detected</p>
+              <p className="text-sm font-bold text-slate-800">No anomalies detected</p>
               <p className="text-[11px] text-slate-500 max-w-md">
                 No returns/bounces, no negative balance, and every transaction is within this account's normal range.
               </p>
             </div>
           ) : (
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/70 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/70 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-3 px-4">Date</th>
                   <th className="py-3 px-4">Narration</th>
@@ -800,9 +930,9 @@ export default function Page3Inference({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {anomaliesList.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-purple-50/40 text-slate-800 transition-colors">
+                  <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
                     <td className="py-3 px-4 text-slate-600 font-semibold">{row.date}</td>
-                    <td className="py-3 px-4 font-bold text-[#3b0764]">{row.narration}</td>
+                    <td className="py-3 px-4 font-bold text-slate-800">{row.narration}</td>
                     <td className="py-3 px-4 text-right font-extrabold text-slate-900">₹{row.amount}</td>
                     <td className="py-3 px-4 font-extrabold text-purple-900">{row.score}</td>
                     <td className="py-3 px-4">
@@ -827,9 +957,9 @@ export default function Page3Inference({
       {/* TAB 6: BRE PAYLOAD */}
       {activeTab === 'bre_payload' && brePayload && (
         <div className="space-y-4 animate-fadeIn">
-          <div className="border border-purple-100 rounded-2xl p-6 bg-white space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-purple-100 pb-3">
-              <h2 className="text-base font-bold text-[#3b0764] flex items-center gap-2">
+          <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm">
+            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
                 <Code className="w-4 h-4 text-purple-700" />
                 BRE Output Payload (JSON)
               </h2>
@@ -845,7 +975,7 @@ export default function Page3Inference({
                 className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
                   copiedPayload
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    : 'bg-white border-purple-200 text-[#3b0764] hover:bg-purple-50'
+                    : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
                 }`}
               >
                 {copiedPayload
@@ -854,7 +984,7 @@ export default function Page3Inference({
               </button>
             </div>
 
-            <pre className="bg-purple-50/40 p-5 rounded-xl text-xs font-mono text-[#3b0764] overflow-x-auto border border-purple-200 shadow-xs font-bold leading-relaxed">
+            <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
               {JSON.stringify(brePayload, null, 2)}
             </pre>
 
@@ -869,7 +999,7 @@ export default function Page3Inference({
                 className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
                   breLoading
                     ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                    : 'bg-[#3b0764] text-white hover:bg-purple-900 shadow-purple-950/20 cursor-pointer'
+                    : 'btn-orange text-white shadow-orange-900/15 cursor-pointer'
                 }`}
               >
                 {breLoading
@@ -898,11 +1028,11 @@ export default function Page3Inference({
               : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
               : 'bg-slate-100 text-slate-500 border-slate-200';
             return (
-              <div className="border border-purple-100 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-purple-100 pb-4">
+              <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
                   <div>
                     <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">BRE Rule Evaluation</span>
-                    <h2 className="text-lg font-bold text-[#3b0764]">Underwriting Decision</h2>
+                    <h2 className="text-lg font-bold text-slate-800">Underwriting Decision</h2>
                     <p className="text-[11px] text-slate-500 font-mono mt-0.5">
                       Applicant profile: {breRun.applicantProfile} · Credit score {breRun.creditScore} · Gate &gt; {breRun.gateThreshold}
                     </p>
@@ -917,9 +1047,9 @@ export default function Page3Inference({
                     ['PASSED', breRun.passed, 'text-emerald-700'],
                     ['FAILED', breRun.failed, 'text-rose-700'],
                     ['NOT EVALUATED', breRun.skipped, 'text-slate-400'],
-                    ['RULES ENABLED', breRun.enabledCount, 'text-[#3b0764]'],
+                    ['RULES ENABLED', breRun.enabledCount, 'text-slate-800'],
                   ].map(([label, val, color]) => (
-                    <div key={label} className="p-3 rounded-xl bg-purple-50/60 border border-purple-100">
+                    <div key={label} className="p-3 rounded-xl bg-slate-50/60 border border-slate-200">
                       <div className="text-[9px] font-mono font-bold text-slate-400 uppercase">{label}</div>
                       <div className={`text-xl font-extrabold font-mono ${color}`}>{val}</div>
                     </div>
@@ -938,14 +1068,14 @@ export default function Page3Inference({
                 {cats.map((cat) => (
                   <div key={cat} className="space-y-1.5">
                     <h3 className="text-[11px] font-mono font-bold text-purple-700 uppercase">{cat}</h3>
-                    <div className="border border-purple-100 rounded-xl divide-y divide-purple-100 overflow-hidden">
+                    <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
                       {breRun.results.filter((r) => r.category === cat).map((r) => (
-                        <div key={r.id} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-purple-50/30">
+                        <div key={r.id} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
                           <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${pill(r.status)}`}>
                             {r.status === 'SKIP' ? 'N/A' : r.status}
                           </span>
                           <div className="min-w-0">
-                            <div className="text-xs font-bold text-[#3b0764]">{r.name}</div>
+                            <div className="text-xs font-bold text-slate-800">{r.name}</div>
                             <div className="text-[11px] text-slate-600">{r.detail}</div>
                             <div className="text-[10px] text-slate-400 font-mono">{r.condition}</div>
                           </div>
@@ -960,6 +1090,90 @@ export default function Page3Inference({
         </div>
       )}
       </>
+      )}
+      </>
+      )}
+
+      {/* ── Test History — shown only when NOT doing a live test. Once a
+             statement is uploaded & analysed this session (hasTested), the live
+             results above take over and this hides. ── */}
+      {!hasTested && (
+        history.length > 0 ? (
+          <div className="border border-slate-200 rounded-2xl bg-white shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
+              <h2 className="text-sm font-bold text-slate-900">Test History</h2>
+              <span className="text-[11px] text-slate-500 font-medium">
+                {history.length} application{history.length === 1 ? '' : 's'} · click a row to reopen
+              </span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50/70 text-slate-500 text-[10px] uppercase tracking-wider font-bold border-b border-slate-200">
+                  <tr>
+                    <th className="py-2 px-4">Applicant / ID</th>
+                    <th className="py-2 px-4">Bank</th>
+                    <th className="py-2 px-4">Model</th>
+                    <th className="py-2 px-4">Data</th>
+                    <th className="py-2 px-4 text-right">Score</th>
+                    <th className="py-2 px-4">Grade</th>
+                    <th className="py-2 px-4">Decision</th>
+                    <th className="py-2 px-4">Txns</th>
+                    <th className="py-2 px-4">When</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {history.map((h, i) => {
+                    const gradeKey = (h.grade || '').toUpperCase().includes('LOW') ? 'LOW'
+                      : (h.grade || '').toUpperCase().includes('MED') ? 'MEDIUM'
+                      : (h.grade || '').toUpperCase().includes('HIGH') ? 'HIGH' : null;
+                    const modelName = h.model || (modelsList.find((m) => m.id === h.modelId) || {}).name || h.modelId;
+                    const live = h.dataSource === 'UPLOADED_STATEMENT';
+                    return (
+                      <tr
+                        key={i}
+                        onClick={() => h.rowId && openHistoryEntry(h)}
+                        className={`hover:bg-purple-50/40 ${h.rowId ? 'cursor-pointer' : ''}`}
+                        title={h.rowId ? 'Open this application’s saved output' : ''}
+                      >
+                        <td className="py-2 px-4 font-bold text-slate-800 underline decoration-slate-300 decoration-dotted underline-offset-2">
+                          {h.id}
+                        </td>
+                        <td className="py-2 px-4 text-slate-600">{h.bank}</td>
+                        <td className="py-2 px-4 text-slate-600">
+                          {modelName}{h.version ? <span className="text-slate-400 font-mono"> {h.version}</span> : null}
+                        </td>
+                        <td className="py-2 px-4">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
+                            live ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
+                          }`}>
+                            {live ? 'LIVE' : 'SAMPLE'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-4 text-right font-bold text-slate-900">{h.riskScore ?? '—'}</td>
+                        <td className="py-2 px-4">
+                          <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${
+                            gradeKey ? GRADE_BADGE_STYLE[gradeKey] : 'bg-slate-100 text-slate-500 border-slate-200'
+                          }`}>
+                            {h.grade || '—'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-4 text-slate-600">{h.decision || '—'}</td>
+                        <td className="py-2 px-4 text-slate-500">{h.txCount ?? '—'}</td>
+                        <td className="py-2 px-4 text-slate-400 whitespace-nowrap">
+                          {h.date ? new Date(h.date).toLocaleString() : '—'}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        ) : (
+          <div className="border border-dashed border-slate-300 rounded-2xl p-8 text-center text-xs text-slate-400">
+            No tests run yet — upload a statement above and analyse it to build the history.
+          </div>
+        )
       )}
 
     </div>

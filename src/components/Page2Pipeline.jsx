@@ -1,6 +1,39 @@
-import { useEffect, useState } from 'react';
-import { Check, ArrowRight, Play, Loader2, ChevronDown, BarChart3, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X } from 'lucide-react';
 import { api } from '../api/client';
+
+/* Shared numbered-section shell so every stage on the page reads as one system:
+   white card, thin slate border, a purple index chip, title + optional subtitle,
+   and an optional right-aligned action. */
+function SectionCard({ n, title, sub, action, children, className = '' }) {
+  return (
+    <section className={`border border-slate-200 rounded-2xl bg-white shadow-sm ${className}`}>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 px-5 pt-5 pb-3 border-b border-slate-200">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="grid place-items-center w-7 h-7 rounded-lg bg-purple-50 text-purple-800 text-xs font-extrabold shrink-0">
+            {n}
+          </span>
+          <div className="min-w-0">
+            <h2 className="text-sm font-bold text-slate-900 leading-tight">{title}</h2>
+            {sub && <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{sub}</p>}
+          </div>
+        </div>
+        {action && <div className="shrink-0 self-start sm:self-auto">{action}</div>}
+      </div>
+      <div className="p-5">{children}</div>
+    </section>
+  );
+}
+
+/* Compact labelled figure used across the upload cards and feature strips. */
+function StatTile({ label, value, tone = 'text-slate-900' }) {
+  return (
+    <div className="rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
+      <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">{label}</div>
+      <div className={`text-sm font-bold ${tone}`}>{value}</div>
+    </div>
+  );
+}
 
 export default function Page2Pipeline({
   selectedIds,
@@ -13,10 +46,13 @@ export default function Page2Pipeline({
   setDeployedStatusMap
 }) {
   const [allSources, setAllSources] = useState([]);
-  const [uploadedFiles, setUploadedFiles] = useState({}); // { [sourceId]: { fileName, cleanlinessPercent, sizeBytes, format, autoFilled, statementSummary, transactionsParsed } }
-  const [scanningIds, setScanningIds]   = useState({}); // { [sourceId]: true } while LLM is scanning
-  const [parsedStatements, setParsedStatements] = useState({}); // { [sourceId]: { transactions, summary } }
-  const [expandedStatements, setExpandedStatements] = useState({}); // { [sourceId]: true } expanded tx table
+  const [uploadedFiles, setUploadedFiles] = useState({}); // { [sourceId]: [ { fileName, cleanlinessPercent, sizeBytes, format, autoFilled, statementSummary, transactionsParsed } ] }
+  const [scanningIds, setScanningIds]   = useState({}); // { [sourceId]: true } while the folder is being scanned
+  const [parsedStatements, setParsedStatements] = useState({}); // { [sourceId]: [ { transactions, summary } ] } — one per file
+  const [expandedStatements, setExpandedStatements] = useState({}); // { [`${sourceId}:${fileIndex}`]: true } expanded tx table
+  const [filePages, setFilePages] = useState({}); // { [sourceId]: pageIndex } — file cards are shown 2 at a time
+  const [uploadResult, setUploadResult] = useState(null); // our own post-upload summary popup
+  const folderInputRef = useRef({}); // { [sourceId]: <input webkitdirectory> } — fallback picker
 
   // Raw Data Noise Level State — populated from the backend after a pipeline run
   // (computed server-side from how many selected sources have an uploaded file)
@@ -104,6 +140,9 @@ export default function Page2Pipeline({
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Sources to upload into — the ones the user picked on the Data Sources page
+  // (via the card arrow) or that "Apply" in the BRE Rules dialog selected.
+  // Nothing selected → the upload section shows a prompt instead of a card.
   const selectedSources = allSources.filter(s => selectedIds.includes(s.id));
 
   // 5 Process Steps
@@ -123,27 +162,68 @@ export default function Page2Pipeline({
     { value: "v3.0", label: "v3.0 (Old)" }
   ];
 
-  // Uploads the real file bytes to the backend, which runs the LLM vision
-  // scanner (Qwen2.5VL via Ollama) for PDFs and returns structured transactions.
-  const handleFileUpload = async (id, file) => {
+  const ACCEPTED_EXT = ['.pdf', '.csv', '.tsv', '.txt', '.json', '.md', '.xlsx'];
+  const isAccepted = (name) => ACCEPTED_EXT.some((e) => name.toLowerCase().endsWith(e));
+
+  // Preferred folder picker: File System Access API. Opens the OS directory
+  // chooser directly and does NOT raise Chrome's "Upload N files to this site?"
+  // trust warning. Falls back to the hidden <input webkitdirectory> on browsers
+  // without it (Firefox / Safari).
+  const pickFolder = async (id) => {
+    if (typeof window.showDirectoryPicker !== 'function') {
+      folderInputRef.current?.[id]?.click();
+      return;
+    }
+    let dirHandle;
+    try {
+      dirHandle = await window.showDirectoryPicker({ id: 'bre-statements', mode: 'read' });
+    } catch {
+      return; // user cancelled the picker
+    }
+    const files = [];
+    for await (const entry of dirHandle.values()) {
+      if (entry.kind === 'file' && isAccepted(entry.name)) {
+        try { files.push(await entry.getFile()); } catch { /* skip unreadable */ }
+      }
+    }
+    if (files.length === 0) {
+      alert('That folder has no PDF / CSV / TSV / TXT / JSON / MD / XLSX statement files.');
+      return;
+    }
+    handleFolderUpload(id, files);
+  };
+
+  // Uploads a folder of files for one source. The backend byte-scans and parses
+  // every file (PDF via the AI vision scanner, CSV/TSV/TXT by column) and keeps
+  // them separate so training runs across all of them.
+  const handleFolderUpload = async (id, fileList) => {
+    const files = Array.from(fileList || []).filter((f) => f.size > 0);
+    if (files.length === 0) return;
+
     setScanningIds(prev => ({ ...prev, [id]: true }));
-    setExpandedStatements(prev => ({ ...prev, [id]: false }));
+    setExpandedStatements({});
+    setFilePages(prev => ({ ...prev, [id]: 0 }));
     try {
       const formData = new FormData();
       formData.append('sourceId', id);
-      formData.append('file', file);
+      files.forEach((f) => formData.append('files', f, f.name));
       const data = await api.postForm('/pipeline/uploads', formData);
       // Guard: data or uploadedFiles may be null if the proxy/backend fails
       if (data?.uploadedFiles) {
         setUploadedFiles(data.uploadedFiles);
       }
-      if (data?.statement) {
-        setParsedStatements(prev => ({ ...prev, [id]: data.statement }));
-        // Auto-expand if transactions were found
-        if (data.statement.transactions?.length > 0) {
-          setExpandedStatements(prev => ({ ...prev, [id]: true }));
-        }
+      if (Array.isArray(data?.statements)) {
+        setParsedStatements(prev => ({ ...prev, [id]: data.statements }));
       }
+      // Styled result popup (our own — shown once the parse finishes).
+      const metas = data?.files || [];
+      const ok = metas.filter((m) => !m.error);
+      setUploadResult({
+        sourceTitle: allSources.find((s) => s.id === id)?.title || id,
+        ok,
+        totalTx: ok.reduce((n, m) => n + (m.transactionsParsed ?? m.statementSummary?.transactionCount ?? 0), 0),
+        skipped: data?.skipped || [],
+      });
     } catch (err) {
       alert(err.message);
     } finally {
@@ -259,216 +339,294 @@ export default function Page2Pipeline({
     <div className="space-y-6 max-w-5xl mx-auto">
       
       {/* Page Header */}
-      <div className="border-b border-purple-200 pb-4">
-        <h1 className="text-2xl font-extrabold text-[#3b0764]">
-          Model Hub: Upload Data, Run Process & Train Models
-        </h1>
-        <p className="text-xs text-slate-600 mt-1">
-          Upload data, select LLM & extract data, run process, inspect table, select ML algorithm, train models, and manage model versions & deployments.
+      <div className="border-b border-slate-200 pb-4">
+        <h1 className="text-xl font-bold text-slate-900">Model Hub</h1>
+        <p className="text-xs text-slate-500 mt-1">
+          Upload data, select AI & extract data, run process, inspect table, select ML algorithm, train models, and manage model versions & deployments.
         </p>
       </div>
 
       {/* 1. Upload Data Section */}
-      <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm">
-        <div className="flex items-center justify-between border-b border-purple-100 pb-3">
-          <h2 className="text-sm font-bold text-[#3b0764]">
-            1. Upload Data for Selected Sources ({selectedSources.length} Selected)
-          </h2>
-          <button
-            onClick={async () => {
-              const data = await api.post('/pipeline/uploads/autofill', { sourceIds: selectedIds });
-              if (data?.uploadedFiles) setUploadedFiles(data.uploadedFiles);
-            }}
-            className="text-xs font-semibold text-purple-700 hover:underline"
-          >
-            Auto-fill Sample Data
-          </button>
-        </div>
+      <SectionCard
+        n="1"
+        title="Upload Data"
+        sub={
+          selectedSources.length > 0
+            ? `${selectedSources.length} source${selectedSources.length === 1 ? '' : 's'} selected`
+            : 'No data source selected'
+        }
+        action={
+          selectedSources.length > 0 ? (
+            <button
+              onClick={async () => {
+                const data = await api.post('/pipeline/uploads/autofill', { sourceIds: selectedIds });
+                if (data?.uploadedFiles) setUploadedFiles(data.uploadedFiles);
+              }}
+              className="text-xs font-semibold text-purple-700 hover:underline"
+            >
+              Auto-fill Sample Data
+            </button>
+          ) : null
+        }
+      >
+        {selectedSources.length === 0 && (
+          <div className="border border-dashed border-slate-300 rounded-xl p-8 text-center">
+            <p className="text-sm font-bold text-slate-700">Pick a data source first</p>
+            <p className="text-xs text-slate-500 mt-1">
+              On <span className="font-semibold text-slate-700">Data Sources</span>, click the arrow on a source
+              (or use <span className="font-semibold text-slate-700">Apply</span> in the BRE Rules dialog) — the
+              upload area appears here once a source is chosen.
+            </p>
+          </div>
+        )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 gap-4">
           {selectedSources.map((source) => {
-            const upload = uploadedFiles[source.id];
+            const raw = uploadedFiles[source.id];
+            const files = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+            const rawStmts = parsedStatements[source.id];
+            const statements = Array.isArray(rawStmts) ? rawStmts : (rawStmts ? [rawStmts] : []);
             const isScanning = !!scanningIds[source.id];
+            const hasFiles = files.length > 0;
+            const totalTx = files.reduce(
+              (n, f) => n + (f.transactionsParsed ?? f.statementSummary?.transactionCount ?? 0), 0
+            );
+
+            // File cards are paged 2-up so a big folder isn't one long scroll.
+            const PER_PAGE = 2;
+            const totalPages = Math.max(1, Math.ceil(files.length / PER_PAGE));
+            const page = Math.min(filePages[source.id] || 0, totalPages - 1);
+            const start = page * PER_PAGE;
+            const pageFiles = files.slice(start, start + PER_PAGE);
+            const goPage = (p) => setFilePages(prev => ({ ...prev, [source.id]: p }));
 
             return (
-              <div key={source.id} className="p-4 border border-purple-100 rounded-xl bg-purple-50/50 space-y-3">
-                <div className="font-bold text-xs text-[#3b0764] truncate">
-                  {source.title}
-                </div>
-
-                <div className="flex items-center justify-between gap-3">
-                  <div className="text-xs text-slate-500 font-mono truncate">
-                    {upload ? upload.fileName : 'No file uploaded'}
-                  </div>
-
-                  <label
-                    className="px-3.5 py-1.5 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold cursor-pointer shrink-0 flex items-center space-x-1 shadow-md shadow-purple-950/20"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <span>{upload ? 'Change' : 'Upload'}</span>
-                    <input
-                      type="file"
-                      className="hidden"
-                      tabIndex={-1}
-                      onChange={(e) => {
-                        const file = e.target.files?.[0];
-                        if (file) {
-                          handleFileUpload(source.id, file);
-                        }
-                        // Reset so the same file can be re-uploaded
-                        e.target.value = '';
-                      }}
-                    />
-                  </label>
-                </div>
-
-                {isScanning && (
-                  <div className="space-y-1.5">
-                    <div className="flex items-center space-x-2 text-[10px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2">
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                      <span>Parsing PDF — text extraction, then AI vision if needed…</span>
-                    </div>
-                    <div className="text-[9px] text-slate-400 font-mono px-1">
-                      Digital PDFs finish instantly · Scanned PDFs use Gemma 4 vision (~3–5s per page)
-                    </div>
-                  </div>
-                )}
-
-                {!isScanning && upload && !upload.autoFilled && (() => {
-                  const stmt    = parsedStatements[source.id];
-                  const summary = upload.statementSummary || stmt?.summary;
-                  const txns    = stmt?.transactions || [];
-                  const isExpanded = !!expandedStatements[source.id];
-                  return (
-                    <div className="space-y-2">
-                      {/* File meta + cleanliness badge */}
-                      <div className="flex items-center justify-between text-[10px] font-mono">
-                        <span className="text-slate-500">
-                          {(upload.sizeBytes / 1024).toFixed(1)} KB &middot; .{upload.format}
-                        </span>
-                        <span className={`font-bold px-2 py-0.5 rounded-md border ${
-                          upload.cleanlinessPercent >= 60
-                            ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                            : 'bg-amber-50 text-amber-800 border-amber-200'
-                        }`}>
-                          Scanned: {upload.cleanlinessPercent}% clean
-                        </span>
+              <div key={source.id} className="rounded-xl border border-slate-200 overflow-hidden bg-white">
+                {/* Card head: source + folder summary + action */}
+                <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-b border-slate-100">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="grid place-items-center w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-400 shrink-0">
+                      <FolderUp className="w-4 h-4" />
+                    </span>
+                    <div className="min-w-0">
+                      <div className="font-bold text-xs text-slate-900 truncate">{source.title}</div>
+                      <div className="text-[11px] text-slate-500 truncate">
+                        {hasFiles
+                          ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalTx} txn${totalTx === 1 ? '' : 's'}`
+                          : 'No folder uploaded'}
                       </div>
+                    </div>
+                  </div>
 
-                      {/* Real LLM-extracted summary stats */}
-                      {summary && (summary.transactionCount > 0) && (
-                        <div className="grid grid-cols-2 gap-1.5">
-                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
-                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Transactions</div>
-                            <div className="text-xs font-bold text-[#3b0764]">{summary.transactionCount}</div>
-                          </div>
-                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
-                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Total Debit</div>
-                            <div className="text-xs font-bold text-red-600">₹{(summary.totalDebit || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
-                          </div>
-                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
-                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Total Credit</div>
-                            <div className="text-xs font-bold text-emerald-600">₹{(summary.totalCredit || 0).toLocaleString('en-IN', {maximumFractionDigits: 0})}</div>
-                          </div>
-                          <div className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
-                            <div className="text-[9px] text-slate-400 font-semibold uppercase tracking-wide">Closing Bal</div>
-                            <div className="text-xs font-bold text-slate-700">
-                              {summary.closingBalance != null ? `₹${summary.closingBalance.toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '—'}
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); pickFolder(source.id); }}
+                    className="px-3 py-1.5 rounded-lg btn-orange text-white text-[11px] font-bold cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
+                  >
+                    <UploadCloud className="w-3.5 h-3.5" />
+                    <span>{hasFiles ? 'Change Folder' : 'Upload Folder'}</span>
+                  </button>
+                  {/* Fallback picker for browsers without showDirectoryPicker */}
+                  <input
+                    ref={(el) => { folderInputRef.current[source.id] = el; }}
+                    type="file"
+                    className="hidden"
+                    tabIndex={-1}
+                    multiple
+                    webkitdirectory=""
+                    onChange={(e) => {
+                      if (e.target.files?.length) {
+                        handleFolderUpload(source.id, e.target.files);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
 
-                      {/* Expandable transaction table */}
-                      {txns.length > 0 && (
-                        <div>
-                          <button
-                            onClick={() => setExpandedStatements(prev => ({ ...prev, [source.id]: !isExpanded }))}
-                            className="w-full flex items-center justify-between text-[10px] font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-lg px-3 py-1.5 hover:bg-purple-100 transition-colors"
-                          >
-                            <span>📋 View {txns.length} Extracted Transactions</span>
-                            <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
-                          </button>
+                <div className="p-4 space-y-2.5">
+                  {!isScanning && !hasFiles && (
+                    <p className="text-[11px] text-slate-400">
+                      Select a folder of statements — any mix of PDF, CSV, TSV, TXT, JSON, MD or XLSX.
+                      Other file types in the folder are skipped.
+                    </p>
+                  )}
 
-                          {isExpanded && (
-                            <div className="mt-1.5 border border-purple-100 rounded-xl overflow-hidden">
-                              <div className="max-h-48 overflow-y-auto">
-                                <table className="w-full text-[9px] font-mono">
-                                  <thead className="bg-purple-50 sticky top-0">
-                                    <tr>
-                                      <th className="px-2 py-1.5 text-left text-[#3b0764] font-bold">Date</th>
-                                      <th className="px-2 py-1.5 text-left text-[#3b0764] font-bold">Narration</th>
-                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Type</th>
-                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Amount</th>
-                                      <th className="px-2 py-1.5 text-right text-[#3b0764] font-bold">Balance</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {txns.map((tx, i) => (
-                                      <tr key={i} className={`border-t border-purple-50 ${ i % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
-                                        <td className="px-2 py-1 text-slate-500 whitespace-nowrap">{tx.date || '—'}</td>
-                                        <td className="px-2 py-1 text-slate-700 max-w-30 truncate" title={tx.narration}>{tx.narration}</td>
-                                        <td className="px-2 py-1 text-right">
-                                          <span className={`px-1.5 py-0.5 rounded font-bold ${
-                                            tx.type === 'DEBIT'
-                                              ? 'bg-red-50 text-red-700'
-                                              : 'bg-emerald-50 text-emerald-700'
-                                          }`}>{tx.type}</span>
-                                        </td>
-                                        <td className={`px-2 py-1 text-right font-bold ${ tx.type === 'DEBIT' ? 'text-red-600' : 'text-emerald-600'}`}>
-                                          ₹{(tx.amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}
-                                        </td>
-                                        <td className="px-2 py-1 text-right text-slate-500">
-                                          {tx.balance != null ? `₹${tx.balance.toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '—'}
-                                        </td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                              </div>
-                            </div>
+                  {isScanning && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center space-x-2 text-[10px] font-mono font-bold text-purple-700 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                        <span>Scanning &amp; parsing every file in the folder…</span>
+                      </div>
+                      <div className="text-[9px] text-slate-400 font-mono px-1">
+                        CSV / TSV / TXT / JSON / MD / XLSX finish instantly · scanned PDFs use Gemma 4 vision (~3–5s per page)
+                      </div>
+                    </div>
+                  )}
+
+                  {!isScanning && hasFiles && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                  {pageFiles.map((f, pi) => {
+                    const i = start + pi;
+                    const stmt = statements[i];
+                    const summary = f.statementSummary || stmt?.summary;
+                    const txns = stmt?.transactions || [];
+                    const key = `${source.id}:${i}`;
+                    const isExpanded = !!expandedStatements[key];
+
+                    return (
+                      <div key={key} className="rounded-lg border border-slate-200 bg-slate-50/40 p-2.5 space-y-2 self-start">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[11px] font-bold text-slate-800 truncate min-w-0" title={f.fileName}>
+                            {f.fileName}
+                          </span>
+                          {f.autoFilled ? (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-200 shrink-0">
+                              SAMPLE
+                            </span>
+                          ) : (
+                            <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded border shrink-0 ${
+                              (f.cleanlinessPercent ?? 0) >= 60
+                                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                                : 'bg-amber-50 text-amber-800 border-amber-200'
+                            }`}>
+                              {f.cleanlinessPercent}% clean
+                            </span>
                           )}
                         </div>
-                      )}
 
-                      {/* Error from LLM */}
-                      {stmt?.error && (
-                        <div className="text-[10px] font-mono text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
-                          ⚠ {stmt.error}
+                        <div className="text-[10px] text-slate-500 font-medium">
+                          {f.sizeBytes != null ? `${(f.sizeBytes / 1024).toFixed(1)} KB · ` : ''}.{f.format}
                         </div>
-                      )}
-                    </div>
-                  );
-                })()}
 
-                {!isScanning && upload?.autoFilled && (
-                  <div className="text-[10px] font-mono text-slate-400">
-                    Sample file (not scanned) &middot; assumed {upload.cleanlinessPercent}% clean
+                        {summary && summary.transactionCount > 0 && (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <StatTile label="Transactions" value={summary.transactionCount} />
+                            <StatTile
+                              label="Total Debit"
+                              tone="text-rose-600"
+                              value={`₹${(summary.totalDebit || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                            />
+                            <StatTile
+                              label="Total Credit"
+                              tone="text-emerald-600"
+                              value={`₹${(summary.totalCredit || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`}
+                            />
+                            <StatTile
+                              label="Closing Bal"
+                              tone="text-slate-700"
+                              value={summary.closingBalance != null ? `₹${summary.closingBalance.toLocaleString('en-IN', { maximumFractionDigits: 0 })}` : '—'}
+                            />
+                          </div>
+                        )}
+
+                        {txns.length > 0 && (
+                          <div>
+                            <button
+                              onClick={() => setExpandedStatements(prev => ({ ...prev, [key]: !isExpanded }))}
+                              className="w-full flex items-center justify-between text-[10px] font-bold text-purple-700 bg-white border border-slate-200 rounded-lg px-3 py-1.5 hover:bg-slate-50 transition-colors"
+                            >
+                              <span>View {txns.length} extracted transactions</span>
+                              <ChevronDown className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
+                            </button>
+
+                            {isExpanded && (
+                              <div className="mt-1.5 border border-slate-200 rounded-xl overflow-hidden">
+                                <div className="max-h-48 overflow-y-auto">
+                                  <table className="w-full text-[9px] font-mono">
+                                    <thead className="bg-slate-50 sticky top-0">
+                                      <tr>
+                                        <th className="px-2 py-1.5 text-left text-slate-800 font-bold">Date</th>
+                                        <th className="px-2 py-1.5 text-left text-slate-800 font-bold">Narration</th>
+                                        <th className="px-2 py-1.5 text-right text-slate-800 font-bold">Type</th>
+                                        <th className="px-2 py-1.5 text-right text-slate-800 font-bold">Amount</th>
+                                        <th className="px-2 py-1.5 text-right text-slate-800 font-bold">Balance</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {txns.map((tx, ti) => (
+                                        <tr key={ti} className={`border-t border-slate-100 ${ ti % 2 === 0 ? 'bg-white' : 'bg-slate-50/50'}`}>
+                                          <td className="px-2 py-1 text-slate-500 whitespace-nowrap">{tx.date || '—'}</td>
+                                          <td className="px-2 py-1 text-slate-700 max-w-30 truncate" title={tx.narration}>{tx.narration}</td>
+                                          <td className="px-2 py-1 text-right">
+                                            <span className={`px-1.5 py-0.5 rounded font-bold ${
+                                              tx.type === 'DEBIT'
+                                                ? 'bg-red-50 text-red-700'
+                                                : 'bg-emerald-50 text-emerald-700'
+                                            }`}>{tx.type}</span>
+                                          </td>
+                                          <td className={`px-2 py-1 text-right font-bold ${ tx.type === 'DEBIT' ? 'text-red-600' : 'text-emerald-600'}`}>
+                                            ₹{(tx.amount || 0).toLocaleString('en-IN', {maximumFractionDigits: 2})}
+                                          </td>
+                                          <td className="px-2 py-1 text-right text-slate-500">
+                                            {tx.balance != null ? `₹${tx.balance.toLocaleString('en-IN', {maximumFractionDigits: 0})}` : '—'}
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {stmt?.error && (
+                          <div className="text-[10px] font-mono text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-1.5">
+                            ⚠ {stmt.error}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                   </div>
-                )}
+                  )}
+
+                  {!isScanning && hasFiles && totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-1">
+                      <span className="text-[10px] text-slate-500 font-medium">
+                        Files {start + 1}–{Math.min(start + PER_PAGE, files.length)} of {files.length}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <button
+                          type="button"
+                          disabled={page === 0}
+                          onClick={() => goPage(page - 1)}
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <ChevronLeft className="w-3 h-3" /> Prev
+                        </button>
+                        <span className="text-[10px] text-slate-400 font-mono px-1">{page + 1}/{totalPages}</span>
+                        <button
+                          type="button"
+                          disabled={page >= totalPages - 1}
+                          onClick={() => goPage(page + 1)}
+                          className="px-2.5 py-1 rounded-lg border border-slate-200 text-[11px] font-bold text-slate-700 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-0.5 cursor-pointer"
+                        >
+                          Next <ChevronRight className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
             );
           })}
         </div>
-      </div>
+      </SectionCard>
 
       {/* 2. Data Pre-Processing & Feature Engineering Process (5 Steps) */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <div>
-            <h2 className="text-sm font-extrabold text-[#3b0764]">
-              2. Data Pre-Processing & Feature Engineering Process
-            </h2>
-            <span className="text-[10px] text-slate-500 font-mono">Stage 1: Vector Preprocessing, Normalization & Feature Selection</span>
-          </div>
-
+      <SectionCard
+        n="2"
+        title="Data Pre-Processing & Feature Engineering Process"
+        sub="Stage 1: Vector Preprocessing, Normalization & Feature Selection"
+        action={
           <button
             onClick={startPipeline}
             disabled={isPipelineRunning}
-            className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
+            className={`px-4 py-2 rounded-lg text-xs font-bold flex items-center gap-1.5 transition-all shadow-sm ${
               isPipelineRunning
                 ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                : 'bg-[#3b0764] text-white hover:bg-purple-900 shadow-purple-950/20 cursor-pointer'
+                : 'btn-orange text-white shadow-orange-900/15 cursor-pointer'
             }`}
           >
             {isPipelineRunning ? (
@@ -483,39 +641,41 @@ export default function Page2Pipeline({
               </>
             )}
           </button>
-        </div>
+        }
+      >
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          {pipelineSteps.map((step) => {
+            const isDone = pipelineStep > step.id;
+            const isCurrent = pipelineStep === step.id;
 
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white shadow-sm">
-          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2">
-            {pipelineSteps.map((step) => {
-              const isDone = pipelineStep > step.id;
-              const isCurrent = pipelineStep === step.id;
-
-              return (
-                <div
-                  key={step.id}
-                  className={`p-3 rounded-xl border text-xs transition-all duration-300 ${
-                    isCurrent
-                      ? 'border-purple-500 bg-purple-50 font-bold shadow-sm ring-2 ring-purple-400'
-                      : isDone
-                      ? 'border-purple-200 bg-purple-50/60 text-[#3b0764]'
-                      : 'border-slate-200 bg-white text-slate-400'
-                  }`}
-                >
-                  <div className="flex items-center justify-between mb-1">
-                    <span className="font-semibold">{step.name}</span>
-                    {isDone && <Check className="w-3.5 h-3.5 text-purple-700 stroke-3" />}
-                    {isCurrent && <Loader2 className="w-3 h-3 text-purple-700 animate-spin" />}
-                  </div>
-                  <p className="text-[10px] text-slate-500">{step.desc}</p>
+            return (
+              <div
+                key={step.id}
+                className={`p-3 rounded-xl border transition-all duration-300 ${
+                  isCurrent
+                    ? 'border-[#fdba74] bg-orange-50/40 ring-1 ring-[#fdba74] shadow-sm'
+                    : isDone
+                    ? 'border-emerald-200 bg-emerald-50/30'
+                    : 'border-slate-200 bg-white'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-1 mb-1">
+                  <span className={`text-[11px] font-bold ${isDone || isCurrent ? 'text-slate-900' : 'text-slate-400'}`}>
+                    {step.name}
+                  </span>
+                  {isDone && <Check className="w-3.5 h-3.5 text-emerald-600 stroke-3 shrink-0" />}
+                  {isCurrent && <Loader2 className="w-3 h-3 text-orange-500 animate-spin shrink-0" />}
                 </div>
-              );
-            })}
-          </div>
+                <p className={`text-[10px] leading-snug ${isDone || isCurrent ? 'text-slate-500' : 'text-slate-400'}`}>
+                  {step.desc}
+                </p>
+              </div>
+            );
+          })}
         </div>
 
         {stageLog.length > 0 && (
-          <div className="mt-3 pt-3 border-t border-purple-100 space-y-1.5">
+          <div className="mt-4 pt-3 border-t border-slate-200 space-y-1.5">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">Real Execution Log</span>
             {stageLog.map((stage) => (
               <div key={stage.id} className="flex items-start gap-2 text-[10px] font-mono">
@@ -528,7 +688,7 @@ export default function Page2Pipeline({
               <div className="flex items-center flex-wrap gap-1.5 pt-1.5">
                 <span className="text-[10px] font-mono text-slate-400 mr-1">Selected features:</span>
                 {selectedFeatures.map((f) => (
-                  <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-purple-50 border border-purple-200 rounded text-[#3b0764]">
+                  <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-800">
                     {f}
                   </span>
                 ))}
@@ -536,50 +696,54 @@ export default function Page2Pipeline({
             )}
           </div>
         )}
-      </div>
+      </SectionCard>
 
-      {/* 3. LLM Noise Inspection & Activation Box */}
-      <div className="border border-purple-100 rounded-2xl p-5 bg-white shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-extrabold text-[#3b0764]">
-              3. LLM Noise Inspection & Activation
-            </h2>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Raw Data Noise: <strong className="text-[#3b0764]">{rawNoisePercent}%</strong> {isLLMActiveForNoise ? '(Exceeds 40% Noise Threshold Limit)' : '(Within Acceptable Threshold)'}
-            </p>
-          </div>
-
-          <div className={`px-4 py-2 rounded-xl border text-xs font-mono font-bold shrink-0 flex items-center space-x-2 ${
+      {/* 3. AI Noise Inspection & Activation Box */}
+      <SectionCard
+        n="3"
+        title="AI Noise Inspection & Activation"
+        sub={
+          <>
+            Raw Data Noise: <strong className="text-slate-800">{rawNoisePercent}%</strong>{' '}
+            {isLLMActiveForNoise ? '(Exceeds 40% Noise Threshold Limit)' : '(Within Acceptable Threshold)'}
+          </>
+        }
+        action={
+          <div className={`px-3.5 py-2 rounded-lg border text-xs font-bold shrink-0 flex items-center gap-2 ${
             isLLMActiveForNoise
-              ? 'bg-purple-100 border-purple-200 text-[#3b0764]'
+              ? 'bg-slate-100 border-slate-200 text-slate-800'
               : 'bg-emerald-50 border-emerald-200 text-emerald-800'
           }`}>
             <span className={`w-2 h-2 rounded-full animate-pulse ${isLLMActiveForNoise ? 'bg-purple-600' : 'bg-emerald-600'}`}></span>
-            <span>{isLLMActiveForNoise ? 'LLM Activated' : 'Direct Ingestion (Clean)'}</span>
+            <span>{isLLMActiveForNoise ? 'AI Activated' : 'Direct Ingestion (Clean)'}</span>
           </div>
-        </div>
-      </div>
+        }
+      >
+        <p className="text-[11px] text-slate-500">
+          When raw noise exceeds the 40% threshold, the AI cleaning pass is activated automatically before
+          ingestion; otherwise the vector is ingested directly.
+        </p>
+      </SectionCard>
 
       {/* 4. Processed Dataset Table */}
       {showProcessedTable && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">PROCESS VECTOR OUTPUT</span>
-              <h2 className="text-sm font-bold text-[#3b0764]">
+              <h2 className="text-sm font-bold text-slate-800">
                 4. Processed Dataset Table
               </h2>
             </div>
 
-            <span className="text-xs font-mono font-bold px-3 py-1 bg-purple-50 border border-purple-200 rounded-lg text-[#3b0764]">
+            <span className="text-xs font-mono font-bold px-3 py-1 bg-slate-50 border border-slate-200 rounded-lg text-slate-800">
               Stored File: {storedFile}
             </span>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-2.5 px-3">Record ID</th>
                   <th className="py-2.5 px-3">ADB Score</th>
@@ -592,8 +756,8 @@ export default function Page2Pipeline({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {processedTableRows.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-purple-50/30 text-slate-800">
-                    <td className="py-2 px-3 font-bold text-[#3b0764]">{row.id}</td>
+                  <tr key={idx} className="hover:bg-slate-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-slate-800">{row.id}</td>
                     <td className="py-2 px-3">{row.adb}</td>
                     <td className="py-2 px-3">{row.gstDelta}</td>
                     <td className="py-2 px-3">{row.upiVelocity}</td>
@@ -602,7 +766,7 @@ export default function Page2Pipeline({
                     <td className="py-2 px-3">
                       <span className={`w-32 inline-block text-center py-0.5 rounded-md text-[10px] font-bold ${
                         row.status === 'Normalized'
-                          ? 'bg-purple-50 border border-purple-200 text-[#3b0764]'
+                          ? 'bg-slate-50 border border-slate-200 text-slate-800'
                           : 'bg-amber-50 border border-amber-200 text-amber-800'
                       }`}>
                         {row.status}
@@ -618,10 +782,10 @@ export default function Page2Pipeline({
 
       {/* 5. Normalize Data Table (Stage 3: real MinMax scaling & Z-score standardization) */}
       {showProcessedTable && normalizeTable.length > 0 && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 3 OUTPUT</span>
-            <h2 className="text-sm font-bold text-[#3b0764]">
+            <h2 className="text-sm font-bold text-slate-800">
               5. Normalize Data — MinMax &amp; Z-Score per Feature
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
@@ -629,9 +793,9 @@ export default function Page2Pipeline({
             </p>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-2.5 px-3">Source</th>
                   <th className="py-2.5 px-3">Feature</th>
@@ -642,8 +806,8 @@ export default function Page2Pipeline({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {normalizeTable.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-purple-50/30 text-slate-800">
-                    <td className="py-2 px-3 font-bold text-[#3b0764]">{row.sourceId}</td>
+                  <tr key={idx} className="hover:bg-slate-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-slate-800">{row.sourceId}</td>
                     <td className="py-2 px-3 text-slate-700">{row.feature}</td>
                     <td className="py-2 px-3 text-right">{row.raw}</td>
                     <td className="py-2 px-3 text-right font-semibold text-purple-900">{row.minmax}</td>
@@ -660,10 +824,10 @@ export default function Page2Pipeline({
 
       {/* 6. Feature Engineering Table (Stage 4: real derived temporal-ratio features) */}
       {showProcessedTable && engineeredTable.length > 0 && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 4 OUTPUT</span>
-            <h2 className="text-sm font-bold text-[#3b0764]">
+            <h2 className="text-sm font-bold text-slate-800">
               6. Feature Engineering — Derived Temporal Ratios
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
@@ -671,9 +835,9 @@ export default function Page2Pipeline({
             </p>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-2.5 px-3">Source</th>
                   <th className="py-2.5 px-3">Engineered Feature</th>
@@ -684,8 +848,8 @@ export default function Page2Pipeline({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {engineeredTable.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-purple-50/30 text-slate-800">
-                    <td className="py-2 px-3 font-bold text-[#3b0764]">{row.sourceId}</td>
+                  <tr key={idx} className="hover:bg-slate-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-slate-800">{row.sourceId}</td>
                     <td className="py-2 px-3 text-slate-700">{row.feature}</td>
                     <td className="py-2 px-3 text-right">{row.value}</td>
                     <td className="py-2 px-3 text-right font-semibold text-purple-900">{row.minmax}</td>
@@ -702,10 +866,10 @@ export default function Page2Pipeline({
 
       {/* 7. Data Selection Table (Stage 5: real variance ranking) */}
       {showProcessedTable && selectionTable.length > 0 && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 5 OUTPUT</span>
-            <h2 className="text-sm font-bold text-[#3b0764]">
+            <h2 className="text-sm font-bold text-slate-800">
               7. Data Selection — High-Variance Feature Ranking
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
@@ -713,9 +877,9 @@ export default function Page2Pipeline({
             </p>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-2.5 px-3">Rank</th>
                   <th className="py-2.5 px-3">Feature</th>
@@ -725,8 +889,8 @@ export default function Page2Pipeline({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {selectionTable.map((row) => (
-                  <tr key={row.rank} className="hover:bg-purple-50/30 text-slate-800">
-                    <td className="py-2 px-3 font-bold text-[#3b0764]">#{row.rank}</td>
+                  <tr key={row.rank} className="hover:bg-slate-50/30 text-slate-800">
+                    <td className="py-2 px-3 font-bold text-slate-800">#{row.rank}</td>
                     <td className="py-2 px-3 text-slate-700">{row.feature}</td>
                     <td className="py-2 px-3 text-right">{row.variance === null ? '—' : row.variance}</td>
                     <td className="py-2 px-3">
@@ -748,11 +912,11 @@ export default function Page2Pipeline({
 
       {/* 8. Standalone: Model Training Process Card */}
       {showProcessedTable && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL SELECTION & TRAINING</span>
-              <h2 className="text-sm font-bold text-[#3b0764]">
+              <h2 className="text-sm font-bold text-slate-800">
                 8. Model Training Process
               </h2>
             </div>
@@ -770,20 +934,20 @@ export default function Page2Pipeline({
                 onChange={() => setSelectedDatasetFile("processed_features_vector.csv")}
                 className="w-4 h-4 text-purple-600 focus:ring-purple-500"
               />
-              <label htmlFor="fileSelect" className="text-xs font-bold text-[#3b0764] cursor-pointer">
+              <label htmlFor="fileSelect" className="text-xs font-bold text-slate-800 cursor-pointer">
                 File: <span className="font-mono text-purple-900 font-semibold">processed_features_vector.csv</span>
               </label>
             </div>
 
             <div>
-              <label className="text-xs font-bold text-[#3b0764] block mb-1">
+              <label className="text-xs font-bold text-slate-800 block mb-1">
                 Select ML Model Algorithm:
               </label>
               <div className="relative">
                 <select
                   value={selectedMLAlgorithm}
                   onChange={(e) => setSelectedMLAlgorithm(e.target.value)}
-                  className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-xs font-semibold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-8"
+                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-8"
                 >
                   <option value="gradient_boosting">Gradient Boosting</option>
                   <option value="random_forest">Random Forest</option>
@@ -795,14 +959,14 @@ export default function Page2Pipeline({
             </div>
           </div>
 
-          <div className="flex justify-end pt-3 border-t border-purple-100">
+          <div className="flex justify-end pt-3 border-t border-slate-200">
             <button
               onClick={startTraining}
               disabled={isTrainingRunning}
               className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
                 isTrainingRunning
                   ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                  : 'bg-[#3b0764] text-white hover:bg-purple-900 shadow-purple-950/20 cursor-pointer'
+                  : 'btn-orange text-white shadow-orange-900/15 cursor-pointer'
               }`}
             >
               {isTrainingRunning ? (
@@ -823,14 +987,14 @@ export default function Page2Pipeline({
 
       {/* 9. Generated Models Output Section */}
       {(visibleModelsCount > 0 || trainingDone) && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm transition-all duration-500 animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm transition-all duration-500 animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
-              <h2 className="text-sm font-bold text-[#3b0764]">
+              <h2 className="text-sm font-bold text-slate-800">
                 9. Generated Models Output
               </h2>
               <p className="text-[10px] text-slate-500 font-mono">
-                Trained using: <strong className="text-[#3b0764] uppercase">{selectedMLAlgorithm.replace('_', ' ')}</strong>
+                Trained using: <strong className="text-slate-800 uppercase">{selectedMLAlgorithm.replace('_', ' ')}</strong>
               </p>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">
@@ -842,15 +1006,15 @@ export default function Page2Pipeline({
             {readyModelsList.slice(0, visibleModelsCount).map((model) => (
               <div
                 key={model.id}
-                className="p-4 rounded-xl border border-purple-100 bg-purple-50/40 space-y-2 transition-all duration-500 animate-fadeIn"
+                className="p-4 rounded-xl border border-slate-200 bg-slate-50/40 space-y-2 transition-all duration-500 animate-fadeIn"
               >
                 <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-sm text-[#3b0764]">{model.name}</h3>
+                  <h3 className="font-bold text-sm text-slate-800">{model.name}</h3>
                   <div className="flex items-center gap-1">
                     {model.realData && (
                       <span className="text-[8px] font-black bg-emerald-500 text-white px-1.5 py-0.5 rounded uppercase tracking-wide">LIVE</span>
                     )}
-                    <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 border border-purple-200 rounded text-purple-900">
+                    <span className="text-[10px] font-mono font-bold bg-white px-2 py-0.5 border border-slate-200 rounded text-purple-900">
                       {model.accuracy}
                     </span>
                   </div>
@@ -870,7 +1034,7 @@ export default function Page2Pipeline({
 
           {/* Real extracted features — shown after all models appear */}
           {trainingDone && realFeatures && (
-            <div className="border-t border-purple-100 pt-4 space-y-2">
+            <div className="border-t border-slate-200 pt-4 space-y-2">
               <div className="flex items-center gap-2">
                 <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded uppercase">Real Data</span>
                 <span className="text-[10px] font-mono text-slate-500">
@@ -889,9 +1053,9 @@ export default function Page2Pipeline({
                   { label: 'Large TX %', value: `${(realFeatures.large_tx_pct * 100)?.toFixed(1)}%` },
                   { label: 'Gap Score', value: realFeatures.irregular_gap_score?.toFixed(4) },
                 ].map(f => (
-                  <div key={f.label} className="bg-white border border-purple-100 rounded-lg px-2.5 py-1.5">
+                  <div key={f.label} className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
                     <div className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">{f.label}</div>
-                    <div className="text-[11px] font-bold text-[#3b0764] font-mono">{f.value}</div>
+                    <div className="text-[11px] font-bold text-slate-800 font-mono">{f.value}</div>
                   </div>
                 ))}
               </div>
@@ -900,11 +1064,13 @@ export default function Page2Pipeline({
         </div>
       )}
 
-      {/* 9b. Model Evaluation — real cross-validation accuracy (compact) */}
-      {(evalSummary?.sessionModels?.length > 0 || evalSummary?.datasetModel) && (
-        <div className="border border-purple-100 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
+      {/* 9b. Model Evaluation — real cross-validation accuracy (compact).
+          Only appears as a step AFTER session training has run — not on every
+          load. The Population (dataset) model alone is not enough to show it. */}
+      {trainingDone && evalSummary?.sessionModels?.length > 0 && (
+        <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <h2 className="text-sm font-bold text-[#3b0764] flex items-center gap-2">
+            <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-700" /> Model Evaluation
               <span className="text-[9px] font-mono text-slate-400 font-normal">real cross-validation</span>
             </h2>
@@ -915,16 +1081,16 @@ export default function Page2Pipeline({
                 </span>
               )}
               <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
-                className="px-3 py-1.5 rounded-lg bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60">
+                className="px-3 py-1.5 rounded-lg btn-orange text-white text-xs font-bold flex items-center gap-1.5 disabled:opacity-60">
                 {reEvaluating ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
                 <span>{reEvaluating ? 'Evaluating…' : 'Re-evaluate'}</span>
               </button>
             </div>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-lg">
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
             <table className="w-full text-left text-[11px] font-mono">
-              <thead className="bg-purple-50/70 text-[#3b0764] text-[9px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/70 text-slate-800 text-[9px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-1.5 px-3">Model</th>
                   <th className="py-1.5 px-3 text-right">Accuracy</th>
@@ -940,8 +1106,8 @@ export default function Page2Pipeline({
                   return (
                     <tr key={m.modelId}
                       onClick={() => setEvalModelId(m.modelId)}
-                      className={`cursor-pointer ${sel ? 'bg-purple-50/70' : 'hover:bg-purple-50/30'}`}>
-                      <td className="py-1.5 px-3 font-bold text-[#3b0764]">
+                      className={`cursor-pointer ${sel ? 'bg-slate-50/70' : 'hover:bg-slate-50/30'}`}>
+                      <td className="py-1.5 px-3 font-bold text-slate-800">
                         {sel && <span className="text-purple-500">▸ </span>}{m.name}
                       </td>
                       <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
@@ -954,7 +1120,7 @@ export default function Page2Pipeline({
                 })}
                 {evalSummary.datasetModel && (
                   <tr className="bg-emerald-50/50">
-                    <td className="py-1.5 px-3 font-bold text-[#3b0764]">
+                    <td className="py-1.5 px-3 font-bold text-slate-800">
                       Population Model <span className="text-[8px] bg-emerald-600 text-white px-1 py-0.5 rounded">v{evalSummary.datasetModel.version}</span>
                       <span className="text-[9px] text-slate-400"> · {evalSummary.datasetModel.nSamples?.toLocaleString()} rows</span>
                     </td>
@@ -971,7 +1137,7 @@ export default function Page2Pipeline({
 
           {/* Per-model detail — for the selected session model */}
           {modelEval?.evalMetrics && (
-          <div className="space-y-2 border border-purple-100 rounded-lg bg-purple-50/20 p-2.5">
+          <div className="space-y-2 border border-slate-200 rounded-lg bg-slate-50/20 p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-mono font-bold text-purple-600 uppercase">
                 {evalSummary.sessionModels?.find((x) => x.modelId === evalModelId)?.name} — detail
@@ -993,17 +1159,17 @@ export default function Page2Pipeline({
                 const meta = modelEval.evalMetrics.metricMeta?.[key];
                 const raw = modelEval.evalMetrics[key];
                 return (
-                  <div key={key} className="rounded-lg bg-white border border-purple-100 px-2 py-1.5">
+                  <div key={key} className="rounded-lg bg-white border border-slate-200 px-2 py-1.5">
                     <span className="text-[8px] font-mono font-bold text-slate-400 block truncate">{meta?.name || fb}</span>
-                    <span className="text-sm font-extrabold text-[#3b0764] font-mono block">{pct ? asPct(raw) : raw}</span>
+                    <span className="text-sm font-extrabold text-slate-800 font-mono block">{pct ? asPct(raw) : raw}</span>
                   </div>
                 );
               })}
             </div>
             {modelEval.cvFolds?.length > 0 && (
-            <div className="overflow-x-auto border border-purple-100 rounded-lg bg-white">
+            <div className="overflow-x-auto border border-slate-200 rounded-lg bg-white">
               <table className="w-full text-left text-[10px] font-mono">
-                <thead className="text-[#3b0764] text-[9px] uppercase tracking-wider font-bold border-b border-purple-100">
+                <thead className="text-slate-800 text-[9px] uppercase tracking-wider font-bold border-b border-slate-200">
                   <tr>
                     <th className="py-1 px-3">Fold</th><th className="py-1 px-3 text-right">R²</th>
                     <th className="py-1 px-3 text-right">MSE</th><th className="py-1 px-3 text-right">Precision</th>
@@ -1014,7 +1180,7 @@ export default function Page2Pipeline({
                 <tbody className="divide-y divide-purple-50">
                   {modelEval.cvFolds.map((f, i) => (
                     <tr key={i}>
-                      <td className="py-1 px-3 font-bold text-[#3b0764]">{f.fold}</td>
+                      <td className="py-1 px-3 font-bold text-slate-800">{f.fold}</td>
                       <td className="py-1 px-3 text-right">{f.r2}</td>
                       <td className="py-1 px-3 text-right">{f.mse}</td>
                       <td className="py-1 px-3 text-right text-emerald-700">{f.precision}</td>
@@ -1042,11 +1208,11 @@ export default function Page2Pipeline({
 
       {/* 10. Model Version & Deployment Management Table */}
       {readyModelsList.length > 0 && (visibleModelsCount === readyModelsList.length || trainingDone) && (
-        <div className="border border-purple-100 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-3">
+        <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL REGISTRY & DEPLOYMENT</span>
-              <h2 className="text-sm font-bold text-[#3b0764]">
+              <h2 className="text-sm font-bold text-slate-800">
                 10. Model Version & Deployment Management Table
               </h2>
             </div>
@@ -1055,9 +1221,9 @@ export default function Page2Pipeline({
             </span>
           </div>
 
-          <div className="overflow-x-auto border border-purple-100 rounded-xl">
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-purple-50/80 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
                 <tr>
                   <th className="py-2.5 px-3">Select Version</th>
                   <th className="py-2.5 px-3">Model Name</th>
@@ -1072,13 +1238,13 @@ export default function Page2Pipeline({
                   const currentStatus = deployedStatusMap[model.id] || "Ready";
 
                   return (
-                    <tr key={model.id} className="hover:bg-purple-50/30 transition-colors text-slate-800">
+                    <tr key={model.id} className="hover:bg-slate-50/30 transition-colors text-slate-800">
                       <td className="py-2 px-3">
                         <div className="relative max-w-32.5">
                           <select
                             value={currentVer}
                             onChange={(e) => handleVersionChange(model.id, e.target.value)}
-                            className="w-full bg-purple-50/50 border border-purple-200 rounded-lg px-2.5 py-1 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 appearance-none cursor-pointer pr-6"
+                            className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-6"
                           >
                             {versionOptions.map((v) => (
                               <option key={v.value} value={v.value}>{v.label}</option>
@@ -1088,13 +1254,13 @@ export default function Page2Pipeline({
                         </div>
                       </td>
 
-                      <td className="py-2 px-3 font-bold text-[#3b0764]">{model.name}</td>
+                      <td className="py-2 px-3 font-bold text-slate-800">{model.name}</td>
 
                       <td className="py-2 px-3">
                         <span className={`w-20 inline-block text-center py-0.5 rounded-md text-[10px] font-extrabold font-mono border ${
                           currentStatus === "Deployed"
                             ? 'bg-purple-900 text-white border-purple-900'
-                            : 'bg-purple-50 text-[#3b0764] border-purple-200'
+                            : 'bg-slate-50 text-slate-800 border-slate-200'
                         }`}>
                           {currentStatus}
                         </span>
@@ -1107,11 +1273,11 @@ export default function Page2Pipeline({
                           onClick={() => handleDeploy(model.id)}
                           className={`px-3 py-1 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
                             currentStatus === "Deployed"
-                              ? 'bg-purple-100 text-[#3b0764] hover:bg-purple-200'
-                              : 'bg-[#3b0764] hover:bg-purple-900 text-white shadow-purple-950/20'
+                              ? 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                              : 'btn-orange text-white shadow-orange-900/15'
                           }`}
                         >
-                          {currentStatus === "Deployed" ? 'Undeploy' : 'Deploy'}
+                          {currentStatus === "Deployed" ? 'Revoke' : 'Upload'}
                         </button>
                       </td>
                     </tr>
@@ -1125,14 +1291,81 @@ export default function Page2Pipeline({
 
       {/* Footer Navigation */}
       {readyModelsList.length > 0 && visibleModelsCount === readyModelsList.length && (
-        <div className="pt-6 border-t border-purple-200 flex justify-end">
+        <div className="pt-6 border-t border-slate-200 flex justify-end">
           <button
             onClick={onNext}
-            className="px-7 py-3 rounded-xl font-bold text-xs bg-[#3b0764] hover:bg-purple-900 text-white shadow-lg shadow-purple-950/20 transition-all flex items-center space-x-2 cursor-pointer"
+            className="px-7 py-3 rounded-xl font-bold text-xs btn-orange text-white shadow-lg shadow-orange-900/15 transition-all flex items-center space-x-2 cursor-pointer"
           >
             <span>Go to Model Testing (View Results)</span>
             <ArrowRight className="w-4 h-4" />
           </button>
+        </div>
+      )}
+
+      {/* Post-upload summary popup (our own — not the browser's) */}
+      {uploadResult && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4"
+          onClick={() => setUploadResult(null)}
+        >
+          <div
+            className="bg-white rounded-3xl max-w-md w-full shadow-2xl border border-slate-200 overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start gap-3 px-6 pt-6 pb-4">
+              <span className="grid place-items-center w-10 h-10 rounded-xl bg-emerald-50 text-emerald-600 shrink-0">
+                <Check className="w-5 h-5 stroke-3" />
+              </span>
+              <div className="min-w-0">
+                <h3 className="text-base font-bold text-slate-900">Folder uploaded</h3>
+                <p className="text-xs text-slate-500 mt-0.5">{uploadResult.sourceTitle}</p>
+              </div>
+              <button
+                onClick={() => setUploadResult(null)}
+                className="ml-auto p-1.5 -mt-1 -mr-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="px-6 pb-4 grid grid-cols-2 gap-2">
+              <StatTile label="Files parsed" value={uploadResult.ok.length} />
+              <StatTile label="Transactions" value={uploadResult.totalTx.toLocaleString('en-IN')} />
+            </div>
+
+            {uploadResult.ok.length > 0 && (
+              <div className="px-6 pb-2 max-h-44 overflow-y-auto space-y-1">
+                {uploadResult.ok.map((m, i) => (
+                  <div key={i} className="flex items-center justify-between gap-2 text-[11px] rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-1.5">
+                    <span className="font-semibold text-slate-700 truncate min-w-0" title={m.fileName}>{m.fileName}</span>
+                    <span className="text-slate-400 shrink-0">
+                      {(m.transactionsParsed ?? m.statementSummary?.transactionCount ?? 0)} txn · {m.cleanlinessPercent ?? '—'}% clean
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {uploadResult.skipped.length > 0 && (
+              <div className="mx-6 mb-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+                <p className="text-[11px] font-bold text-amber-800 mb-0.5">
+                  {uploadResult.skipped.length} file{uploadResult.skipped.length === 1 ? '' : 's'} skipped
+                </p>
+                {uploadResult.skipped.slice(0, 4).map((s, i) => (
+                  <p key={i} className="text-[10px] text-amber-700 truncate">{s}</p>
+                ))}
+              </div>
+            )}
+
+            <div className="px-6 py-4 border-t border-slate-200 flex justify-end">
+              <button
+                onClick={() => setUploadResult(null)}
+                className="px-5 py-2 rounded-xl text-xs font-bold btn-orange text-white shadow-md shadow-orange-900/15 cursor-pointer"
+              >
+                Done
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

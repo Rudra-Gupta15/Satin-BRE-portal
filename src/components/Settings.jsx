@@ -98,7 +98,7 @@ export default function Settings({ hideHeader = false }) {
     if (s.includes('investigate') || s.includes('medium')) {
       return 'bg-amber-50 text-amber-700 border-amber-200';
     }
-    return 'bg-purple-50 text-purple-700 border-purple-200';
+    return 'bg-slate-50 text-purple-700 border-slate-200';
   };
 
   return (
@@ -106,12 +106,12 @@ export default function Settings({ hideHeader = false }) {
       
       {/* Header Banner — hidden when rendered inside popup */}
       {!hideHeader && (
-        <div className="bg-white p-6 rounded-2xl border border-purple-100 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
-            <div className="inline-flex items-center space-x-2 bg-purple-50 border border-purple-200 px-3 py-1 rounded-full text-xs font-mono text-purple-900 font-bold mb-2">
+            <div className="inline-flex items-center space-x-2 bg-slate-50 border border-slate-200 px-3 py-1 rounded-full text-xs font-mono text-purple-900 font-bold mb-2">
               <span>BRE Rule Engine Settings</span>
             </div>
-            <h1 className="text-xl font-extrabold text-[#3b0764]">
+            <h1 className="text-xl font-extrabold text-slate-800">
               Underwriting &amp; Decisioning Rules Configuration
             </h1>
             <p className="text-xs text-slate-500 mt-0.5">
@@ -122,7 +122,7 @@ export default function Settings({ hideHeader = false }) {
           <div className="flex items-center space-x-3">
             <button
               onClick={handleSave}
-              className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#3b0764] hover:bg-purple-900 text-white transition-all flex items-center space-x-2 shadow-md shadow-purple-950/20 cursor-pointer"
+              className="px-5 py-2.5 rounded-xl text-xs font-bold btn-orange text-white transition-all flex items-center space-x-2 shadow-md shadow-orange-900/15 cursor-pointer"
             >
               {isSaved ? (
                 <>
@@ -143,12 +143,12 @@ export default function Settings({ hideHeader = false }) {
 
 
       {/* 2. Rule Controls Bar */}
-      <div className="bg-white p-4 rounded-2xl border border-purple-100 shadow-xs space-y-3">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
           
           {/* Active Rules Counter */}
           <div className="flex items-center space-x-2">
-            <span className="text-xs font-mono font-bold text-[#3b0764] bg-purple-100 border border-purple-200 px-3 py-1 rounded-xl">
+            <span className="text-xs font-mono font-bold text-slate-800 bg-slate-100 border border-slate-200 px-3 py-1 rounded-xl">
               {activeRulesCount} / {totalRulesCount} Rules Active
             </span>
             <span className="text-xs text-slate-500">
@@ -160,7 +160,7 @@ export default function Settings({ hideHeader = false }) {
           <div className="flex items-center space-x-2">
             <button
               onClick={handleEnableAll}
-              className="px-3 py-1.5 rounded-xl bg-purple-50 hover:bg-purple-100 border border-purple-200 text-[#3b0764] text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
+              className="px-3 py-1.5 rounded-xl bg-slate-50 hover:bg-slate-100 border border-slate-200 text-slate-800 text-xs font-bold transition-all cursor-pointer flex items-center space-x-1"
             >
               <ToggleRight className="w-3.5 h-3.5 text-purple-600" />
               <span>Enable All</span>
@@ -186,7 +186,7 @@ export default function Settings({ hideHeader = false }) {
         </div>
 
         {/* Search & Category Selector Bar */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-purple-50">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-2 border-t border-slate-100">
           <div className="relative md:col-span-2">
             <Search className="w-4 h-4 text-purple-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
             <input
@@ -194,7 +194,7 @@ export default function Settings({ hideHeader = false }) {
               placeholder="Search 15 rule categories, conditions, or signal types..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-purple-50/40 border border-purple-200 rounded-xl pl-9 pr-3.5 py-2 text-xs font-medium text-[#3b0764] focus:outline-none focus:border-purple-600"
+              className="w-full bg-slate-50/40 border border-slate-200 rounded-xl pl-9 pr-3.5 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#ea580c]"
             />
           </div>
 
@@ -202,7 +202,7 @@ export default function Settings({ hideHeader = false }) {
             <select
               value={selectedCategory}
               onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full bg-purple-50/40 border border-purple-200 rounded-xl px-3 py-2 text-xs font-bold text-[#3b0764] focus:outline-none focus:border-purple-600 cursor-pointer"
+              className="w-full bg-slate-50/40 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] cursor-pointer"
             >
               <option value="all">All 15 Categories</option>
               {categories.map(cat => (
@@ -226,18 +226,18 @@ export default function Settings({ hideHeader = false }) {
           const categoryActiveCount = category.rules.filter(r => enabledRules[r.id]).length;
 
           return (
-            <div key={category.id} className="bg-white rounded-2xl border border-purple-100 p-5 shadow-xs space-y-4">
+            <div key={category.id} className="bg-white rounded-2xl border border-slate-200 p-5 shadow-xs space-y-4">
               
               {/* Category Header */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-purple-100 pb-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 pb-3">
                 <div>
-                  <h3 className="text-sm font-extrabold text-[#3b0764]">
+                  <h3 className="text-sm font-extrabold text-slate-800">
                     {category.title}
                   </h3>
                   <p className="text-xs text-slate-500 mt-0.5">{category.desc}</p>
                 </div>
 
-                <span className="text-[11px] font-mono font-bold text-purple-900 bg-purple-50 px-2.5 py-1 rounded-lg border border-purple-100 shrink-0">
+                <span className="text-[11px] font-mono font-bold text-purple-900 bg-slate-50 px-2.5 py-1 rounded-lg border border-slate-200 shrink-0">
                   {categoryActiveCount} / {categoryRulesCount} Active
                 </span>
               </div>
@@ -248,11 +248,11 @@ export default function Settings({ hideHeader = false }) {
                   const isEnabled = enabledRules[rule.id] !== false;
 
                   return (
-                    <div key={rule.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-purple-50/30 px-2 rounded-xl transition-colors">
+                    <div key={rule.id} className="py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-slate-50/30 px-2 rounded-xl transition-colors">
                       
                       {/* Rule Name & Condition */}
                       <div className="space-y-0.5 max-w-xl">
-                        <span className={`text-xs font-bold block ${isEnabled ? 'text-[#3b0764]' : 'text-slate-400 line-through'}`}>
+                        <span className={`text-xs font-bold block ${isEnabled ? 'text-slate-800' : 'text-slate-400 line-through'}`}>
                           {rule.name}
                         </span>
                         <p className="text-[11px] text-slate-600 font-mono">

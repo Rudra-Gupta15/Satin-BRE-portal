@@ -1,56 +1,66 @@
-import { RefreshCw, LogOut, User } from 'lucide-react';
+import {
+  RefreshCw,
+  LogOut,
+  User,
+  Database,
+  Boxes,
+  FlaskConical,
+  Sparkles,
+  ShieldCheck,
+} from 'lucide-react';
+import Logo from './Logo';
 
 export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout }) {
-  // 6 Navigation Items for the Left Sidebar
+  // Sidebar navigation items
   const sidebarItems = [
-    { id: 'products', name: "Data Sources", desc: "Selected Data Feeds" },
-    { id: 'model_hub', name: "Model Hub", desc: "Process Studio & Training" },
-    { id: 'model_testing', name: "Model Testing", desc: "Inference & Risk Analytics" },
-    { id: 'ai_architecture', name: "AI Intelligence", desc: "LLM Data Extraction Engine" },
-    { id: 'ml_security', name: "ML Security", desc: "Guardrails, Drift & Lineage" },
-
+    { id: 'products', name: 'Data Sources', icon: Database },
+    { id: 'model_hub', name: 'Model Hub', icon: Boxes },
+    { id: 'model_testing', name: 'Model Testing', icon: FlaskConical },
+    { id: 'ai_architecture', name: 'AI Intelligence', icon: Sparkles },
+    { id: 'ml_security', name: 'ML Security', icon: ShieldCheck },
   ];
 
   return (
-    <aside className="w-64 min-w-[16rem] max-w-[16rem] h-screen sticky top-0 bg-white border-r border-purple-100 p-4 shadow-sm flex flex-col justify-between shrink-0 z-30 overflow-y-auto">
-      
+    <aside className="w-64 min-w-[16rem] max-w-[16rem] h-screen sticky top-0 bg-[#edeaf4] p-4 flex flex-col justify-between shrink-0 z-30 overflow-y-auto overflow-x-hidden">
+
       <div className="space-y-6">
-        
-        {/* Top Branding Card — SFL Training */}
-        <div 
-          className="w-full border border-purple-100 rounded-2xl bg-linear-to-b from-purple-50/60 to-white p-3.5 shadow-xs text-center space-y-1 hover:shadow-md transition-all cursor-pointer group"
+
+        {/* Brand logo */}
+        <div
+          className="w-full pt-3 pb-2 flex flex-col items-center justify-center cursor-pointer"
           onClick={() => setActiveView('products')}
         >
-          <span className="text-2.5xl font-black italic tracking-wider bg-linear-to-r from-rose-500 via-amber-500 to-purple-900 bg-clip-text text-transparent block group-hover:scale-105 transition-transform">
-            SFL
-          </span>
-          <span className="text-xs font-extrabold text-[#3b0764] italic block tracking-tight">
-            SFL Training
+          <Logo imgClassName="h-14 w-auto" />
+          <span className="mt-1 text-[11px] font-bold uppercase tracking-[0.2em] text-slate-500">
+            Training
           </span>
         </div>
 
-
-
-        {/* 5 Sidebar Menu Items */}
-        <nav className="space-y-2">
+        {/* Navigation */}
+        <nav className="space-y-1.5">
           {sidebarItems.map((item) => {
             const isSelected = activeView === item.id;
+            const Icon = item.icon;
 
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => setActiveView(item.id)}
-                className={`w-full px-4 py-3 rounded-2xl text-left transition-all cursor-pointer ${
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all cursor-pointer ${
                   isSelected
-                    ? 'bg-[#3b0764] text-white shadow-md shadow-purple-950/20 font-bold ring-1 ring-purple-800'
-                    : 'text-slate-700 hover:text-[#3b0764] hover:bg-purple-50/80 font-semibold'
+                    ? '-mr-4 bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold'
+                    : 'text-slate-600 hover:bg-white/60 font-semibold'
                 }`}
               >
-                <span className="text-xs block truncate font-bold">{item.name}</span>
-                <span className={`text-[10px] block truncate mt-0.5 ${isSelected ? 'text-purple-200' : 'text-slate-400'}`}>
-                  {item.desc}
+                <span
+                  className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                    isSelected ? 'bg-white/15 text-white' : 'bg-white text-[#3b0764] shadow-xs'
+                  }`}
+                >
+                  <Icon className="w-4.5 h-4.5" strokeWidth={2.2} />
                 </span>
+                <span className="text-sm truncate">{item.name}</span>
               </button>
             );
           })}
@@ -58,47 +68,51 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
 
       </div>
 
-      {/* Sidebar Footer User Info */}
-      <div className="pt-4 border-t border-purple-100 space-y-3">
-        {user && (
-          <div className="flex items-center space-x-2.5 p-2.5 bg-purple-50/70 rounded-xl border border-purple-100">
-            <div className="w-8 h-8 rounded-full bg-purple-200 flex items-center justify-center text-[#3b0764] font-bold text-xs shrink-0">
-              <User className="w-4 h-4" />
+      {/* Footer: identity + compact circular actions */}
+      {user && (
+        <div className="pt-4 mt-4 border-t border-slate-200 flex items-center justify-between gap-2">
+
+          {/* Identity */}
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center text-[#3b0764] shrink-0">
+              <User className="w-4.5 h-4.5" strokeWidth={2.2} />
             </div>
-            <div className="overflow-hidden flex-1">
-              <span className="text-xs font-bold text-[#3b0764] block truncate">
+            <div className="min-w-0 leading-tight">
+              <span className="text-xs font-bold text-slate-800 block truncate">
                 {user.email.split('@')[0]}
               </span>
-              <span className="text-[10px] text-slate-500 block capitalize font-medium">{user.role || 'Admin'}</span>
+              <span className="text-[10px] text-slate-500 block capitalize font-medium">
+                {user.role || 'Admin'}
+              </span>
             </div>
           </div>
-        )}
 
-        {/* Equal 50%-50% Width Reset & Logout Buttons */}
-        <div className="grid grid-cols-2 gap-2">
-          <button
-            type="button"
-            onClick={onReset}
-            title="Reset Selection"
-            className="w-full py-2.5 px-3 rounded-xl bg-purple-50 hover:bg-purple-100 text-[#3b0764] border border-purple-200 transition-colors text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            <span>Reset</span>
-          </button>
-
-          {onLogout && (
+          {/* Circular icon actions */}
+          <div className="flex items-center gap-1.5 shrink-0">
             <button
               type="button"
-              onClick={onLogout}
-              title="Logout"
-              className="w-full py-2.5 px-3 rounded-xl bg-rose-50 hover:bg-rose-100 text-rose-600 border border-rose-200 transition-colors text-xs font-bold flex items-center justify-center space-x-1.5 cursor-pointer shadow-xs"
+              onClick={onReset}
+              title="Reset Selection"
+              aria-label="Reset Selection"
+              className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center text-slate-600 hover:bg-slate-50 hover:text-slate-900 transition-colors cursor-pointer"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              <span>Logout</span>
+              <RefreshCw className="w-4 h-4" strokeWidth={2.2} />
             </button>
-          )}
+
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                title="Logout"
+                aria-label="Logout"
+                className="w-9 h-9 rounded-full bg-white border border-slate-200 shadow-xs flex items-center justify-center text-rose-500 hover:bg-rose-50 hover:border-rose-200 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-4 h-4" strokeWidth={2.2} />
+              </button>
+            )}
+          </div>
         </div>
-      </div>
+      )}
 
     </aside>
   );

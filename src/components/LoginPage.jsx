@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Mail, Lock, Shield, Zap, Users, RefreshCw, Eye, EyeOff } from 'lucide-react';
 import { api } from '../api/client';
+import Logo from './Logo';
 
 export default function LoginPage({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -45,7 +46,7 @@ export default function LoginPage({ onLoginSuccess }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#f4effc] flex items-center justify-center p-4 sm:p-8 font-sans">
+    <div className="min-h-screen bg-white flex items-center justify-center p-4 sm:p-8 font-sans">
       <div className="max-w-5xl w-full grid grid-cols-1 md:grid-cols-2 gap-8 items-center">
         
         {/* Left Side: Hero Graphic & Value Props */}
@@ -67,7 +68,7 @@ export default function LoginPage({ onLoginSuccess }) {
           </div>
 
           <div>
-            <h1 className="text-3xl sm:text-4xl font-extrabold text-[#3b0764] tracking-tight">
+            <h1 className="text-3xl sm:text-4xl font-extrabold text-slate-800 tracking-tight">
               Welcome Back!
             </h1>
             <p className="text-sm text-slate-600 mt-1">
@@ -78,31 +79,31 @@ export default function LoginPage({ onLoginSuccess }) {
           {/* Feature List */}
           <div className="space-y-4 pt-2">
             <div className="flex items-start space-x-3.5">
-              <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-[#3b0764] shrink-0 mt-0.5">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-800 shrink-0 mt-0.5">
                 <Shield className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-[#3b0764]">Secure Access</h4>
+                <h4 className="text-xs font-bold text-slate-800">Secure Access</h4>
                 <p className="text-xs text-slate-500">Your data is protected with enterprise-grade security</p>
               </div>
             </div>
 
             <div className="flex items-start space-x-3.5">
-              <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-purple-700 shrink-0 mt-0.5">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-purple-700 shrink-0 mt-0.5">
                 <Zap className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-[#3b0764]">Seamless Experience</h4>
+                <h4 className="text-xs font-bold text-slate-800">Seamless Experience</h4>
                 <p className="text-xs text-slate-500">Fast, unified access across every data product</p>
               </div>
             </div>
 
             <div className="flex items-start space-x-3.5">
-              <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center text-[#3b0764] shrink-0 mt-0.5">
+              <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-slate-800 shrink-0 mt-0.5">
                 <Users className="w-4 h-4" />
               </div>
               <div>
-                <h4 className="text-xs font-bold text-[#3b0764]">Role Based Access</h4>
+                <h4 className="text-xs font-bold text-slate-800">Role Based Access</h4>
                 <p className="text-xs text-slate-500">Access features and applications based on your role</p>
               </div>
             </div>
@@ -112,22 +113,15 @@ export default function LoginPage({ onLoginSuccess }) {
 
         {/* Right Side: Login Card */}
         <div className="flex justify-center md:justify-end">
-          <div className="bg-white rounded-3xl p-8 shadow-xl border border-purple-100 max-w-md w-full space-y-5 relative">
+          <div className="bg-white rounded-3xl p-8 shadow-xl border border-slate-200 max-w-md w-full space-y-5 relative">
             
             {/* Top Logo Badge */}
             <div className="flex justify-center mb-2">
-              <div className="border border-purple-200 px-6 py-2 rounded-xl bg-purple-50/50 text-center">
-                <span className="font-extrabold text-xl tracking-wider text-purple-800 block leading-none">
-                  SFL
-                </span>
-                <span className="text-[10px] font-bold text-[#3b0764] tracking-wide block uppercase mt-0.5">
-                  SFL Training
-                </span>
-              </div>
+              <Logo imgClassName="h-12 w-auto" />
             </div>
 
             <div className="text-center space-y-1">
-              <h2 className="text-2xl font-extrabold text-[#3b0764]">Login</h2>
+              <h2 className="text-2xl font-extrabold text-slate-800">Login</h2>
               <p className="text-xs text-slate-400">Please enter the login credentials</p>
             </div>
 
@@ -149,7 +143,7 @@ export default function LoginPage({ onLoginSuccess }) {
                     placeholder="Email ID"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-purple-600 focus:bg-white transition-all"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#ea580c] focus:bg-white transition-all"
                   />
                 </div>
               </div>
@@ -164,7 +158,7 @@ export default function LoginPage({ onLoginSuccess }) {
                     placeholder="Password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-10 py-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-purple-600 focus:bg-white transition-all"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-10 py-3 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#ea580c] focus:bg-white transition-all"
                   />
                   <button
                     type="button"
@@ -178,7 +172,7 @@ export default function LoginPage({ onLoginSuccess }) {
 
               {/* Captcha Section */}
               <div className="flex items-center space-x-2 pt-1">
-                <div className="bg-purple-100 border border-purple-200 px-3.5 py-2.5 rounded-xl font-mono italic text-sm font-bold text-[#3b0764] tracking-widest select-none shrink-0 line-through decoration-purple-400">
+                <div className="bg-slate-100 border border-slate-200 px-3.5 py-2.5 rounded-xl font-mono italic text-sm font-bold text-slate-800 tracking-widest select-none shrink-0 line-through decoration-purple-400">
                   {captchaCode}
                 </div>
 
@@ -187,7 +181,7 @@ export default function LoginPage({ onLoginSuccess }) {
                   placeholder="Enter Captcha"
                   value={captchaInput}
                   onChange={(e) => setCaptchaInput(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-purple-600 transition-all"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2.5 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:border-[#ea580c] transition-all"
                 />
 
                 <button
@@ -204,7 +198,7 @@ export default function LoginPage({ onLoginSuccess }) {
               <button
                 type="submit"
                 disabled={isSubmitting}
-                className="w-full py-3.5 rounded-xl font-bold text-sm bg-[#3b0764] hover:bg-purple-900 text-white shadow-lg shadow-purple-950/20 transition-all cursor-pointer mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
+                className="w-full py-3.5 rounded-xl font-bold text-sm btn-orange text-white shadow-lg shadow-orange-900/15 transition-all cursor-pointer mt-2 disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 {isSubmitting ? 'Signing in...' : 'Login'}
               </button>

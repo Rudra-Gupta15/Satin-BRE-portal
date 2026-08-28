@@ -30,11 +30,17 @@ export default function App() {
   const [inspectedSource, setInspectedSource] = useState(null);
   const [trainedModels, setTrainedModels] = useState([]);
 
-  // Restore selection persisted server-side (survives a full page reload)
+  // Every browser reload / app open starts from a clean slate: wipe the server
+  // session (source selection, uploads, pipeline output, trained models) before
+  // rendering anything. Switching sidebar tabs within a session keeps your work;
+  // reloading the page does not.
+  const [booting, setBooting] = useState(true);
   useEffect(() => {
-    api.get('/data-sources/selection')
-      .then((data) => setSelectedIds(data.selectedIds || []))
-      .catch(() => {});
+    let cancelled = false;
+    api.post('/reset').catch(() => {}).finally(() => {
+      if (!cancelled) setBooting(false);
+    });
+    return () => { cancelled = true; };
   }, []);
 
   // Deployment & Version Management Shared State
@@ -51,15 +57,6 @@ export default function App() {
     fraud_model: "Ready",
     money_balance_model: "Ready"
   });
-
-  // Restore trained models / versions / deployment status from a prior run this session
-  useEffect(() => {
-    api.get('/models').then((data) => {
-      if (data.trainedModels?.length) setTrainedModels(data.trainedModels);
-      setSelectedVersionMap(data.selectedVersionMap);
-      setDeployedStatusMap(data.deployedStatusMap);
-    }).catch(() => {});
-  }, []);
 
   const handleReset = () => {
     setActiveView('products');
@@ -101,8 +98,17 @@ export default function App() {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
   }
 
+  // Hold rendering until the server session has been wiped for this fresh load
+  if (booting) {
+    return (
+      <div className="min-h-screen grid place-items-center bg-white text-slate-400 text-xs font-semibold">
+        Loading…
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#f4effc] text-[#3b0764] flex flex-col md:flex-row font-sans selection:bg-[#3b0764] selection:text-white">
+    <div className="min-h-screen bg-white text-slate-800 flex flex-col md:flex-row font-sans selection:bg-[#3b0764] selection:text-white">
 
       {/* Left-Side Vertical Sidebar (Overview, Products, Model Hub, Model Testing) */}
       <SidebarNavbar
@@ -180,10 +186,10 @@ export default function App() {
         </main>
 
         {/* Footer */}
-        <footer className="border-t border-purple-200 bg-white/80 py-3 text-center text-xs text-slate-500">
+        <footer className="border-t border-slate-200 bg-white/80 py-3 text-center text-xs text-slate-500">
           <div className="max-w-6xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
             <span>SFL Training — BRE AI Financial Risk &amp; Underwriting Platform</span>
-            <span className="font-mono text-[#3b0764] font-semibold">11 Data Vectors Integrated</span>
+            <span className="font-mono text-slate-800 font-semibold">11 Data Vectors Integrated</span>
           </div>
         </footer>
       </div>

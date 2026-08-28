@@ -4,8 +4,8 @@ import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, PieChart, Pie, Cell }
 import { api } from '../api/client';
 
 const KPI_META = {
-  analyzed: { color: 'text-[#3b0764]', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
-  processed: { color: 'text-purple-700', badgeStyle: 'bg-purple-50 text-purple-900 border-purple-200' },
+  analyzed: { color: 'text-slate-800', badgeStyle: 'bg-slate-50 text-purple-900 border-slate-200' },
+  processed: { color: 'text-purple-700', badgeStyle: 'bg-slate-50 text-purple-900 border-slate-200' },
   avg_score: { color: 'text-emerald-700', badgeStyle: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
   pending: { color: 'text-amber-700', badgeStyle: 'bg-amber-50 text-amber-800 border-amber-200' },
   anomalies: { color: 'text-rose-700', badgeStyle: 'bg-rose-50 text-rose-800 border-rose-200' },
@@ -167,9 +167,9 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
     <div className="space-y-4 max-w-6xl mx-auto">
       
       {/* Page Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-purple-200 pb-3">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-200 pb-3">
         <div>
-          <h1 className="text-2xl font-extrabold text-[#3b0764]">
+          <h1 className="text-2xl font-extrabold text-slate-800">
             Overview Dashboard
           </h1>
           <p className="text-xs text-slate-600 mt-0.5">
@@ -180,13 +180,13 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={onGoToProducts}
-            className="px-3.5 py-1.5 rounded-xl bg-white border border-purple-200 text-[#3b0764] text-xs font-bold shadow-xs hover:bg-purple-50 transition-colors cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl bg-white border border-slate-200 text-slate-800 text-xs font-bold shadow-xs hover:bg-slate-50 transition-colors cursor-pointer"
           >
             Configure Products
           </button>
           <button
             onClick={onGoToModelHub}
-            className="px-3.5 py-1.5 rounded-xl bg-[#3b0764] hover:bg-purple-900 text-white text-xs font-bold shadow-md shadow-purple-950/20 transition-all flex items-center space-x-1 cursor-pointer"
+            className="px-3.5 py-1.5 rounded-xl btn-orange text-white text-xs font-bold shadow-md shadow-orange-900/15 transition-all flex items-center space-x-1 cursor-pointer"
           >
             <span>Model Testing</span>
             <ArrowRight className="w-3.5 h-3.5" />
@@ -199,7 +199,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
         {kpiData.map((kpi) => (
           <div
             key={kpi.id}
-            className="p-3.5 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-2 flex flex-col justify-between"
+            className="p-3.5 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-2 flex flex-col justify-between"
           >
             <div className="flex items-center justify-between">
               <span className="text-[10px] font-extrabold font-mono text-slate-400 tracking-wider">
@@ -229,15 +229,15 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         
         {/* Statements by Status (Bar Chart) */}
-        <div className="p-4 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-3">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-2">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
             <div>
-              <h3 className="text-sm font-bold text-[#3b0764]">
+              <h3 className="text-sm font-bold text-slate-800">
                 Statements by status
               </h3>
               <p className="text-[10px] text-slate-400">Integrated callout data labels</p>
             </div>
-            <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200">
+            <span className="text-[10px] font-mono font-bold text-purple-700 bg-slate-50 px-2 py-0.5 rounded border border-slate-200">
               Total: {totalAnalyzed}
             </span>
           </div>
@@ -258,10 +258,10 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
         </div>
 
         {/* Statements by Risk Grade (Donut Chart) */}
-        <div className="p-4 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-3">
-          <div className="flex items-center justify-between border-b border-purple-100 pb-2">
+        <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-2">
             <div>
-              <h3 className="text-sm font-bold text-[#3b0764]">
+              <h3 className="text-sm font-bold text-slate-800">
                 Statements by risk grade
               </h3>
               <p className="text-[10px] text-slate-400">Integrated callout data labels</p>
@@ -294,7 +294,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
 
             {/* Donut Center Counter Badge */}
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
-              <span className="text-2xl font-extrabold text-[#3b0764] font-mono leading-none">{lowRiskEntry?.value ?? 0}</span>
+              <span className="text-2xl font-extrabold text-slate-800 font-mono leading-none">{lowRiskEntry?.value ?? 0}</span>
               <span className="text-[10px] font-extrabold text-emerald-600 uppercase mt-1 tracking-wider">LOW RISK</span>
             </div>
           </div>
@@ -303,19 +303,19 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
       </div>
 
       {/* Bottom Table: Recent Statements */}
-      <div className="p-4 rounded-2xl bg-white border border-purple-100 shadow-xs space-y-3">
-        <div className="flex items-center justify-between border-b border-purple-100 pb-2">
+      <div className="p-4 rounded-2xl bg-white border border-slate-200 shadow-xs space-y-3">
+        <div className="flex items-center justify-between border-b border-slate-200 pb-2">
           <div>
-            <h3 className="text-sm font-bold text-[#3b0764]">
+            <h3 className="text-sm font-bold text-slate-800">
               Recent Bank Statements & Ingestion Status
             </h3>
           </div>
           <span className="text-[10px] font-mono font-bold text-slate-500">Live Ingestion Feed</span>
         </div>
 
-        <div className="overflow-x-auto border border-purple-100 rounded-xl">
+        <div className="overflow-x-auto border border-slate-200 rounded-xl">
           <table className="w-full text-left text-xs font-mono">
-            <thead className="bg-purple-50/70 text-[#3b0764] border-b border-purple-100 text-[11px] uppercase tracking-wider font-bold">
+            <thead className="bg-slate-50/70 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
               <tr>
                 <th className="py-2 px-3">Statement ID</th>
                 <th className="py-2 px-3">Source / Feed</th>
@@ -328,8 +328,8 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
             </thead>
             <tbody className="divide-y divide-purple-100 bg-white">
               {recentStatements.map((row, idx) => (
-                <tr key={idx} className="hover:bg-purple-50/40 text-slate-800 transition-colors">
-                  <td className="py-2 px-3 font-bold text-[#3b0764]">{row.id}</td>
+                <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
+                  <td className="py-2 px-3 font-bold text-slate-800">{row.id}</td>
                   <td className="py-2 px-3 font-medium text-slate-700">{row.bank}</td>
                   <td className="py-2 px-3 text-slate-500 text-[11px]">{row.date}</td>
                   <td className="py-2 px-3 text-right font-bold text-slate-900">{row.txCount}</td>
@@ -348,7 +348,7 @@ export default function OverviewDashboard({ onGoToProducts, onGoToModelHub }) {
                   <td className="py-2 px-3">
                     <span className={`w-24 inline-block text-center py-0.5 rounded border text-[10px] font-bold ${
                       row.status === 'ANALYZED'
-                        ? 'bg-purple-50 border-purple-200 text-[#3b0764]'
+                        ? 'bg-slate-50 border-slate-200 text-slate-800'
                         : 'bg-rose-50 border-rose-200 text-rose-700'
                     }`}>
                       {row.status}
