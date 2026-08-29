@@ -10,12 +10,10 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
   const [isBREModalOpen, setIsBREModalOpen] = useState(false);
   const [breTab, setBreTab] = useState('product');
   const [loanProducts, setLoanProducts] = useState([
-    { id: 'home', name: 'Home Loan', desc: 'Financing for purchase or construction of residential property.' },
-    { id: 'lap', name: 'Loan Against Property (LAP)', desc: 'Secured loan against residential or commercial property.' },
-    { id: 'personal', name: 'Personal Loan', desc: 'Unsecured multipurpose loan based on income and bureau profile.' },
-    { id: 'business', name: 'Business Loan', desc: 'Working capital and expansion funding for MSMEs and SMEs.' },
-    { id: 'gold', name: 'Gold Loan', desc: 'Secured loan against pledged gold ornaments and coins.' },
-    { id: 'education', name: 'Education Loan', desc: 'Tuition and living-cost financing for higher studies.' },
+    { id: 'lap_sbl', name: 'LAP / SBL', desc: 'Loan against property / secured business loan for self-employed borrowers and SMEs.' },
+    { id: 'machine', name: 'Machine Loan', desc: 'Term financing for plant, machinery and equipment purchases.' },
+    { id: 'vehicle', name: 'Vehicle Loan', desc: 'Financing for new and used passenger and commercial vehicles.' },
+    { id: 'msme', name: 'MSME Loan', desc: 'Working-capital and growth funding for micro, small & medium enterprises.' },
   ]);
   const [newLoanName, setNewLoanName] = useState('');
   const [selectedLoan, setSelectedLoan] = useState(null);
@@ -130,7 +128,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
             <div
               key={source.id}
               onClick={() => toggleSource(source.id)}
-              className={`relative p-4 rounded-2xl border cursor-pointer transition-all min-h-27 ${
+              className={`relative p-4 rounded-2xl border cursor-pointer transition-all min-h-40 flex flex-col ${
                 isSelected
                   ? 'border-[#ea580c] bg-white shadow-md shadow-slate-900/10 ring-2 ring-[#fdba74]'
                   : 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
@@ -143,31 +141,32 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
                 <p className="text-xs text-slate-500 leading-relaxed">
                   {source.shortDesc}
                 </p>
+              </div>
 
-                <div className="pt-1 flex items-center justify-between gap-2">
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsBREModalOpen(true);
-                    }}
-                    className="text-[11px] font-semibold text-purple-700 hover:underline inline-flex items-center gap-1"
-                  >
-                    <span>BRE Rule Training</span>
-                  </button>
+              {/* Fixed footer — always at the bottom of the card, regardless of description length */}
+              <div className="mt-auto pt-3 flex items-center justify-between gap-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsBREModalOpen(true);
+                  }}
+                  className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] shadow-sm shadow-purple-950/20 hover:brightness-110 transition-all cursor-pointer inline-flex items-center gap-1"
+                >
+                  <span>BRE Rule Training</span>
+                </button>
 
-                  {/* Select this source (if not already) and continue to Model Hub */}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (!isSelected) toggleSource(source.id);
-                      onNext();
-                    }}
-                    title="Use this source & continue to Model Hub"
-                    className="w-7 h-7 rounded-full btn-orange text-white flex items-center justify-center shadow-sm transition-colors cursor-pointer shrink-0"
-                  >
-                    <ArrowDownRight className="w-4 h-4" />
-                  </button>
-                </div>
+                {/* Select this source (if not already) and continue to Model Hub */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (!isSelected) toggleSource(source.id);
+                    onNext();
+                  }}
+                  title="Use this source & continue to Model Hub"
+                  className="w-7 h-7 rounded-full btn-orange text-white flex items-center justify-center shadow-sm transition-colors cursor-pointer shrink-0"
+                >
+                  <ArrowDownRight className="w-4 h-4" />
+                </button>
               </div>
             </div>
           );
