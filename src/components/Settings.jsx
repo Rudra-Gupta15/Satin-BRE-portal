@@ -9,6 +9,7 @@ import {
   Loader2
 } from 'lucide-react';
 import { api } from '../api/client';
+import Select from './Select';
 
 export default function Settings({ hideHeader = false }) {
   const [categories, setCategories] = useState([]);
@@ -199,16 +200,14 @@ export default function Settings({ hideHeader = false }) {
           </div>
 
           <div>
-            <select
+            <Select
               value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="w-full bg-slate-50/40 border border-slate-200 rounded-xl px-3 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] cursor-pointer"
-            >
-              <option value="all">All 15 Categories</option>
-              {categories.map(cat => (
-                <option key={cat.id} value={cat.id}>{cat.title}</option>
-              ))}
-            </select>
+              onChange={setSelectedCategory}
+              options={[
+                { value: 'all', label: 'All Categories' },
+                ...categories.map((cat) => ({ value: cat.id, label: cat.title })),
+              ]}
+            />
           </div>
         </div>
       </div>

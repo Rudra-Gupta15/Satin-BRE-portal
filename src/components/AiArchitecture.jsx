@@ -6,14 +6,21 @@ import {
   Check,
   Wifi,
   CheckCircle2,
-  Play
+  Play,
+  ScanSearch
 } from 'lucide-react';
 import { api } from '../api/client';
+import Select from './Select';
 
 export default function AiArchitecture() {
   const [selectedLLM, setSelectedLLM] = useState("gemma");
   const [isExtractingData, setIsExtractingData] = useState(false);
   const [dataExtracted, setDataExtracted] = useState(false);
+
+  // Locally-installed vision models found by scanning the machine's Ollama.
+  const [localModels, setLocalModels] = useState([]);
+  const [scanning, setScanning] = useState(false);
+  const [scanDetail, setScanDetail] = useState("");
 
   // Dropdown cleanliness percentage
   const [cleanlinessPercent, setCleanlinessPercent] = useState(60);
@@ -47,6 +54,24 @@ export default function AiArchitecture() {
   const handleSelectedLLMChange = (value) => {
     setSelectedLLM(value);
     api.put('/ai-architecture/llm', { selectedLLM: value }).catch(() => {});
+  };
+
+  const handleScanDevice = async () => {
+    setScanning(true);
+    setScanDetail("");
+    try {
+      const data = await api.get('/ai-architecture/local-models');
+      setLocalModels(data.models || []);
+      setScanDetail(data.detail || "");
+      if (data.models?.length && !data.models.some((m) => m.value === selectedLLM)) {
+        handleSelectedLLMChange(data.models[0].value);
+      }
+    } catch (err) {
+      setLocalModels([]);
+      setScanDetail(err.message);
+    } finally {
+      setScanning(false);
+    }
   };
 
   // ── Dataset training + versioned model registry ──────────────────────────
@@ -154,24 +179,43 @@ export default function AiArchitecture() {
 
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
           <div className="w-full sm:max-w-md space-y-1.5">
-            <label className="text-xs font-bold text-slate-700 block">
-              Choose Base AI Architecture:
-            </label>
-            <div className="relative">
-              <select
-                value={selectedLLM}
-                onChange={(e) => handleSelectedLLMChange(e.target.value)}
-                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-8 shadow-2xs"
+            <div className="flex items-center justify-between gap-2">
+              <label className="text-xs font-bold text-slate-700">
+                Choose Base AI Architecture:
+              </label>
+              <button
+                type="button"
+                onClick={handleScanDevice}
+                disabled={scanning}
+                className="px-2.5 py-1 rounded-lg text-[11px] font-bold border border-purple-200 bg-purple-50 text-purple-800 hover:bg-purple-100 transition-colors cursor-pointer flex items-center gap-1 shrink-0 disabled:opacity-60"
               >
-                <option value="gemma">Gemma 2 (vLLM Engine)</option>
-                <option value="qwen">Qwen 2.5 (vLLM Engine)</option>
-                <option value="llama">Llama 3.1 8B (vLLM Engine)</option>
-                <option value="mistral">Mistral NeMo (vLLM Engine)</option>
-              </select>
-              <ChevronDown className="w-4 h-4 text-purple-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                {scanning
+                  ? <><Loader2 className="w-3 h-3 animate-spin" /> Scanning…</>
+                  : <><ScanSearch className="w-3 h-3" /> Scan device</>}
+              </button>
             </div>
+            <Select
+              value={selectedLLM}
+              onChange={handleSelectedLLMChange}
+              options={
+                localModels.length > 0
+                  ? localModels.map((m) => ({
+                      value: m.value,
+                      label: m.label,
+                      hint: [m.sizeGB ? `${m.sizeGB} GB` : '', m.params].filter(Boolean).join(' · ') || undefined,
+                    }))
+                  : [
+                      { value: 'gemma', label: 'Gemma 4 (Ollama)' },
+                      { value: 'qwen', label: 'Qwen 2.5 VL (Ollama)' },
+                      { value: 'llama', label: 'Llama 3.2 Vision (Ollama)' },
+                      { value: 'mistral', label: 'Mistral (Ollama)' },
+                    ]
+              }
+            />
             <span className="text-[11px] text-slate-500 block">
-              Selected Model Engine: <strong className="text-slate-800 font-mono uppercase">{selectedLLM}</strong>
+              {scanDetail
+                ? scanDetail
+                : <>Active model: <strong className="text-slate-800 font-mono">{selectedLLM}</strong> — press <em>Scan device</em> to list vision models installed on this machine.</>}
             </span>
           </div>
 
@@ -351,18 +395,16 @@ export default function AiArchitecture() {
             Percentage of Cleanliness in Data:
           </label>
 
-          {/* Dropdown on the right */}
-          <div className="relative w-full sm:w-36">
-            <select
+          <div className="w-full sm:w-36">
+            <Select
               value={cleanlinessPercent}
-              onChange={(e) => handleCleanlinessChange(Number(e.target.value))}
-              className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-8 shadow-2xs"
-            >
-              <option value={60}>60%</option>
-              <option value={70}>70%</option>
-              <option value={80}>80%</option>
-            </select>
-            <ChevronDown className="w-4 h-4 text-purple-500 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              onChange={(v) => handleCleanlinessChange(Number(v))}
+              options={[
+                { value: 60, label: '60%' },
+                { value: 70, label: '70%' },
+                { value: 80, label: '80%' },
+              ]}
+            />
           </div>
         </div>
 
@@ -380,17 +422,16 @@ export default function AiArchitecture() {
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
-            <div className="relative">
-              <select
+            <div className="w-44">
+              <Select
                 value={trainAlgo}
-                onChange={(e) => setTrainAlgo(e.target.value)}
-                className="bg-slate-50/50 border border-slate-200 rounded-xl pl-3 pr-8 py-2 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer"
-              >
-                <option value="gradient_boosting">Gradient Boosting</option>
-                <option value="random_forest">Random Forest</option>
-                <option value="logistic_regression">Logistic Regression</option>
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-purple-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                onChange={setTrainAlgo}
+                options={[
+                  { value: 'gradient_boosting', label: 'Gradient Boosting' },
+                  { value: 'random_forest', label: 'Random Forest' },
+                  { value: 'logistic_regression', label: 'Logistic Regression' },
+                ]}
+              />
             </div>
             <label className={`px-3.5 py-2 rounded-xl text-white text-xs font-bold cursor-pointer flex items-center gap-1.5 shadow-md shadow-orange-900/15 ${
               datasetTraining ? 'bg-slate-400 cursor-not-allowed' : 'btn-orange'

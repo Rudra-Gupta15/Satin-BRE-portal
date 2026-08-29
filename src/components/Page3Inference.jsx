@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
+import Select from './Select';
 
 // "stmt_07_ARJUN_PATEL_BHATT.pdf" -> "ARJUN PATEL BHATT"
 function cleanStatementLabel(fname) {
@@ -133,18 +134,31 @@ export default function Page3Inference({
   const activeModelObj = modelsList.find(m => m.id === activeModelId) || { name: "Risk Model" };
   const activeVersion = selectedVersionMap[activeModelId] || "v3.4";
 
-  // `record` = deliberate run (upload / Run Analysis) → append to test history.
+  // `record` = deliberate run (upload / Run Analysis). On those, we log a history
+  // row for EVERY selected model (not just the one shown) so all scanned models
+  // appear in Test History.
   const runInference = async (modelId, id, bank, sourceId, record = false) => {
     setIsLoading(true);
     setLoadError('');
+    const customId = (id || '').trim() || 'applicant';
     try {
       const data = await api.post('/inference/run', {
-        modelId, customId: (id || '').trim() || 'applicant', bankName: bank, sourceId, record,
+        modelId, customId, bankName: bank, sourceId, record,
       });
       setBundle(data);
       setHasTested(true);
       setViewingHistory(null);
-      if (record) loadHistory();
+
+      if (record) {
+        // background-record the other selected models, then refresh the list
+        const others = chosenModelIds.filter((m) => m !== modelId);
+        await Promise.allSettled(
+          others.map((m) =>
+            api.post('/inference/run', { modelId: m, customId, bankName: bank, sourceId, record: true }),
+          ),
+        );
+        loadHistory();
+      }
     } catch (err) {
       setLoadError(err.message);
     } finally {
@@ -205,13 +219,13 @@ export default function Page3Inference({
     }
   };
 
+  // Evaluates the *active loan product's* enabled BRE rules (chosen in the BRE
+  // Rule Training modal on Data Sources) against the uploaded statement.
   const handleRunBreRules = async () => {
     setBreLoading(true);
     setBreRun(null);
     try {
-      const data = await api.post('/inference/bre-rules', {
-        customId, sourceId: selectedInputSourceId,
-      });
+      const data = await api.post('/bre-products/evaluate', { sourceId: selectedInputSourceId });
       setBreRun(data);
     } catch (err) {
       setBreRun({ available: false, message: err.message });
@@ -220,8 +234,12 @@ export default function Page3Inference({
     }
   };
 
-  // Clear any previous BRE run when the underlying analysis changes.
-  useEffect(() => { setBreRun(null); }, [bundle]);
+  // BRE rules run automatically whenever the analysis changes — result shown
+  // directly, no button. Skipped for a read-only history view (no live statement).
+  useEffect(() => {
+    setBreRun(null);
+    if (bundle && !viewingHistory) handleRunBreRules();
+  }, [bundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const transactionsList = bundle?.transactions || [];
   const anomaliesList = bundle?.anomalies || [];
@@ -330,19 +348,18 @@ export default function Page3Inference({
               2. Upload Input Data:
             </label>
             <div className="flex items-center space-x-1.5">
-              <select
-                value={selectedInputSourceId}
-                onChange={(e) => setSelectedInputSourceId(e.target.value)}
-                className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-6 truncate"
-              >
-                {selectedSources.length > 0 ? selectedSources.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    {s.title}
-                  </option>
-                )) : (
-                  <option value="account_aggregator">Account Aggregator (AA) — Bank Statement</option>
-                )}
-              </select>
+              <div className="flex-1 min-w-0">
+                <Select
+                  value={selectedInputSourceId}
+                  onChange={setSelectedInputSourceId}
+                  options={
+                    selectedSources.length > 0
+                      ? selectedSources.map((s) => ({ value: s.id, label: s.title }))
+                      : [{ value: 'account_aggregator', label: 'Account Aggregator (AA) — Bank Statement' }]
+                  }
+                  buttonClassName="w-full flex items-center justify-between gap-2 bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 cursor-pointer hover:border-slate-300"
+                />
+              </div>
 
               <label
                 className={`px-3.5 py-2 rounded-xl text-white text-xs font-bold shrink-0 flex items-center space-x-1 shadow-md shadow-orange-900/15 ${
@@ -988,28 +1005,16 @@ export default function Page3Inference({
               {JSON.stringify(brePayload, null, 2)}
             </pre>
 
-            <div className="flex items-center justify-between pt-1">
-              <p className="text-[11px] text-slate-500">
-                Runs every rule enabled on the <strong>Settings</strong> page against this applicant's real data.
-              </p>
-              <button
-                type="button"
-                onClick={handleRunBreRules}
-                disabled={breLoading}
-                className={`px-5 py-2.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 transition-all shadow-md ${
-                  breLoading
-                    ? 'bg-slate-200 text-slate-500 cursor-not-allowed'
-                    : 'btn-orange text-white shadow-orange-900/15 cursor-pointer'
-                }`}
-              >
-                {breLoading
-                  ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /><span>Running BRE rules...</span></>
-                  : <><Play className="w-3.5 h-3.5 fill-current" /><span>{breRun ? 'Re-run BRE Rules' : 'Run BRE Rules'}</span></>}
-              </button>
-            </div>
           </div>
 
-          {breRun && breRun.available === false && (
+          {breLoading && (
+            <div className="py-8 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span>Evaluating BRE rules against this applicant's data…</span>
+            </div>
+          )}
+
+          {!breLoading && breRun && breRun.available === false && (
             <div className="border border-amber-200 rounded-2xl p-5 bg-amber-50 text-amber-900 text-xs font-semibold">
               {breRun.message}
             </div>
@@ -1022,7 +1027,6 @@ export default function Page3Inference({
               'CONDITIONAL APPROVAL': 'bg-amber-100 text-amber-900 border-amber-200',
               'REJECTED': 'bg-rose-100 text-rose-800 border-rose-200',
             };
-            const cats = [...new Set(breRun.results.map((r) => r.category))];
             const pill = (s) => s === 'PASS'
               ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
               : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
@@ -1031,7 +1035,9 @@ export default function Page3Inference({
               <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
                   <div>
-                    <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">BRE Rule Evaluation</span>
+                    <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
+                      BRE Rule Evaluation{breRun.productName ? ` · ${breRun.productName}` : ''}
+                    </span>
                     <h2 className="text-lg font-bold text-slate-800">Underwriting Decision</h2>
                     <p className="text-[11px] text-slate-500 font-mono mt-0.5">
                       Applicant profile: {breRun.applicantProfile} · Credit score {breRun.creditScore} · Gate &gt; {breRun.gateThreshold}
@@ -1065,25 +1071,22 @@ export default function Page3Inference({
                   </div>
                 )}
 
-                {cats.map((cat) => (
-                  <div key={cat} className="space-y-1.5">
-                    <h3 className="text-[11px] font-mono font-bold text-purple-700 uppercase">{cat}</h3>
-                    <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
-                      {breRun.results.filter((r) => r.category === cat).map((r) => (
-                        <div key={r.id} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
-                          <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${pill(r.status)}`}>
-                            {r.status === 'SKIP' ? 'N/A' : r.status}
-                          </span>
-                          <div className="min-w-0">
-                            <div className="text-xs font-bold text-slate-800">{r.name}</div>
-                            <div className="text-[11px] text-slate-600">{r.detail}</div>
-                            <div className="text-[10px] text-slate-400 font-mono">{r.condition}</div>
-                          </div>
+                <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
+                  {breRun.results.map((r, i) => (
+                    <div key={r.id + i} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
+                      <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${pill(r.status)}`}>
+                        {r.status === 'SKIP' ? 'N/A' : r.status}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-bold text-slate-800">
+                          {r.label}
+                          {r.serious && <span className="ml-1.5 text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1">KEY</span>}
                         </div>
-                      ))}
+                        <div className="text-[11px] text-slate-600">{r.detail}</div>
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             );
           })()}
@@ -1103,7 +1106,7 @@ export default function Page3Inference({
             <div className="flex items-center justify-between px-5 py-3 border-b border-slate-200">
               <h2 className="text-sm font-bold text-slate-900">Test History</h2>
               <span className="text-[11px] text-slate-500 font-medium">
-                {history.length} application{history.length === 1 ? '' : 's'} · click a row to reopen
+                {history.length} result{history.length === 1 ? '' : 's'} · click a row to reopen
               </span>
             </div>
             <div className="overflow-x-auto">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X } from 'lucide-react';
 import { api } from '../api/client';
+import Select from './Select';
 
 /* Shared numbered-section shell so every stage on the page reads as one system:
    white card, thin slate border, a purple index chip, title + optional subtitle,
@@ -943,19 +944,16 @@ export default function Page2Pipeline({
               <label className="text-xs font-bold text-slate-800 block mb-1">
                 Select ML Model Algorithm:
               </label>
-              <div className="relative">
-                <select
-                  value={selectedMLAlgorithm}
-                  onChange={(e) => setSelectedMLAlgorithm(e.target.value)}
-                  className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-8"
-                >
-                  <option value="gradient_boosting">Gradient Boosting</option>
-                  <option value="random_forest">Random Forest</option>
-                  <option value="logistic_regression">Logistic Regression</option>
-                  <option value="svm">SVM (Support Vector Machine)</option>
-                </select>
-                <ChevronDown className="w-4 h-4 text-purple-500 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-              </div>
+              <Select
+                value={selectedMLAlgorithm}
+                onChange={setSelectedMLAlgorithm}
+                options={[
+                  { value: 'gradient_boosting', label: 'Gradient Boosting' },
+                  { value: 'random_forest', label: 'Random Forest' },
+                  { value: 'logistic_regression', label: 'Logistic Regression' },
+                  { value: 'svm', label: 'SVM (Support Vector Machine)' },
+                ]}
+              />
             </div>
           </div>
 
@@ -1240,17 +1238,13 @@ export default function Page2Pipeline({
                   return (
                     <tr key={model.id} className="hover:bg-slate-50/30 transition-colors text-slate-800">
                       <td className="py-2 px-3">
-                        <div className="relative max-w-32.5">
-                          <select
+                        <div className="max-w-36">
+                          <Select
                             value={currentVer}
-                            onChange={(e) => handleVersionChange(model.id, e.target.value)}
-                            className="w-full bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:border-[#ea580c] appearance-none cursor-pointer pr-6"
-                          >
-                            {versionOptions.map((v) => (
-                              <option key={v.value} value={v.value}>{v.label}</option>
-                            ))}
-                          </select>
-                          <ChevronDown className="w-3.5 h-3.5 text-purple-500 absolute right-1.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            onChange={(v) => handleVersionChange(model.id, v)}
+                            options={versionOptions}
+                            buttonClassName="w-full flex items-center justify-between gap-1.5 bg-slate-50/50 border border-slate-200 rounded-lg px-2.5 py-1 text-xs font-bold text-slate-800 cursor-pointer hover:border-slate-300"
+                          />
                         </div>
                       </td>
 

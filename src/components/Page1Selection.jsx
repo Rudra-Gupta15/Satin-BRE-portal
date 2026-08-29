@@ -34,7 +34,12 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
   };
 
   const selectLoan = (id) => {
-    setSelectedLoan((prev) => (prev === id ? null : id));
+    setSelectedLoan((prev) => {
+      const next = prev === id ? null : id;
+      // Tell the backend which product the Model Testing BRE tab should evaluate.
+      api.put('/bre-products/active', { productId: next }).catch(() => {});
+      return next;
+    });
   };
 
   useEffect(() => {
