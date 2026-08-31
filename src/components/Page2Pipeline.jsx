@@ -1,23 +1,17 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X } from 'lucide-react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X, Ban, PencilLine } from 'lucide-react';
 import { api } from '../api/client';
 import Select from './Select';
 
-/* Shared numbered-section shell so every stage on the page reads as one system:
-   white card, thin slate border, a purple index chip, title + optional subtitle,
-   and an optional right-aligned action. */
-function SectionCard({ n, title, sub, action, children, className = '' }) {
+/* Shared section shell: white card, thin slate border, title + optional
+   subtitle, and an optional right-aligned action. */
+function SectionCard({ title, sub, action, children, className = '' }) {
   return (
     <section className={`border border-slate-200 rounded-2xl bg-white shadow-sm ${className}`}>
       <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 px-5 pt-5 pb-3 border-b border-slate-200">
-        <div className="flex items-center gap-3 min-w-0">
-          <span className="grid place-items-center w-7 h-7 rounded-lg bg-purple-50 text-purple-800 text-xs font-extrabold shrink-0">
-            {n}
-          </span>
-          <div className="min-w-0">
-            <h2 className="text-sm font-bold text-slate-900 leading-tight">{title}</h2>
-            {sub && <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{sub}</p>}
-          </div>
+        <div className="min-w-0">
+          <h2 className="text-sm font-bold text-slate-900 leading-tight">{title}</h2>
+          {sub && <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{sub}</p>}
         </div>
         {action && <div className="shrink-0 self-start sm:self-auto">{action}</div>}
       </div>
@@ -39,6 +33,7 @@ function StatTile({ label, value, tone = 'text-slate-900' }) {
 export default function Page2Pipeline({
   selectedIds,
   onNext,
+  focusSourceId,
   trainedModels,
   setTrainedModels,
   selectedVersionMap,
@@ -53,7 +48,17 @@ export default function Page2Pipeline({
   const [expandedStatements, setExpandedStatements] = useState({}); // { [`${sourceId}:${fileIndex}`]: true } expanded tx table
   const [filePages, setFilePages] = useState({}); // { [sourceId]: pageIndex } — file cards are shown 2 at a time
   const [uploadResult, setUploadResult] = useState(null); // our own post-upload summary popup
+  const [statusSaved, setStatusSaved] = useState(null); // brief "Saved as X" confirmation
   const folderInputRef = useRef({}); // { [sourceId]: <input webkitdirectory> } — fallback picker
+
+  // Footer: stamp every selected data source with a publish status.
+  const saveStatus = async (status) => {
+    if (!selectedIds.length) return;
+    const statuses = Object.fromEntries(selectedIds.map((id) => [id, status]));
+    try { await api.put('/data-sources/status', { statuses }); } catch { /* ignore */ }
+    setStatusSaved(status);
+    setTimeout(() => setStatusSaved(null), 2500);
+  };
 
   // Raw Data Noise Level State — populated from the backend after a pipeline run
   // (computed server-side from how many selected sources have an uploaded file)
@@ -145,6 +150,11 @@ export default function Page2Pipeline({
   // (via the card arrow) or that "Apply" in the BRE Rules dialog selected.
   // Nothing selected → the upload section shows a prompt instead of a card.
   const selectedSources = allSources.filter(s => selectedIds.includes(s.id));
+
+  // Only one source's upload card shows — the one whose arrow was clicked on the
+  // Data Sources page (falls back to the first selected source).
+  const activeUpload =
+    selectedSources.find(s => s.id === focusSourceId) || selectedSources[0] || null;
 
   // 5 Process Steps
   const pipelineSteps = [
@@ -349,7 +359,6 @@ export default function Page2Pipeline({
 
       {/* 1. Upload Data Section */}
       <SectionCard
-        n="1"
         title="Upload Data"
         sub={
           selectedSources.length > 0
@@ -382,7 +391,7 @@ export default function Page2Pipeline({
         )}
 
         <div className="grid grid-cols-1 gap-4">
-          {selectedSources.map((source) => {
+          {(activeUpload ? [activeUpload] : []).map((source) => {
             const raw = uploadedFiles[source.id];
             const files = Array.isArray(raw) ? raw : (raw ? [raw] : []);
             const rawStmts = parsedStatements[source.id];
@@ -392,6 +401,8 @@ export default function Page2Pipeline({
             const totalTx = files.reduce(
               (n, f) => n + (f.transactionsParsed ?? f.statementSummary?.transactionCount ?? 0), 0
             );
+            const isGst = files.some(f => f.gst);
+            const totalGstRecords = files.reduce((n, f) => n + (f.gst?.records ?? 0), 0);
 
             // File cards are paged 2-up so a big folder isn't one long scroll.
             const PER_PAGE = 2;
@@ -412,9 +423,11 @@ export default function Page2Pipeline({
                     <div className="min-w-0">
                       <div className="font-bold text-xs text-slate-900 truncate">{source.title}</div>
                       <div className="text-[11px] text-slate-500 truncate">
-                        {hasFiles
-                          ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalTx} txn${totalTx === 1 ? '' : 's'}`
-                          : 'No folder uploaded'}
+                        {!hasFiles
+                          ? 'No folder uploaded'
+                          : isGst
+                          ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalGstRecords} GST record${totalGstRecords === 1 ? '' : 's'}`
+                          : `${files.length} file${files.length === 1 ? '' : 's'} · ${totalTx} txn${totalTx === 1 ? '' : 's'}`}
                       </div>
                     </div>
                   </div>
@@ -498,6 +511,32 @@ export default function Page2Pipeline({
                         <div className="text-[10px] text-slate-500 font-medium">
                           {f.sizeBytes != null ? `${(f.sizeBytes / 1024).toFixed(1)} KB · ` : ''}.{f.format}
                         </div>
+
+                        {f.gst && (
+                          <div className="grid grid-cols-2 gap-1.5">
+                            <StatTile label="GST records" value={f.gst.records} />
+                            <StatTile
+                              label="Avg score"
+                              tone="text-purple-700"
+                              value={f.gst.avgUnderwritingScore != null ? f.gst.avgUnderwritingScore : '—'}
+                            />
+                            <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
+                              <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Risk flags</div>
+                              <div className="flex flex-wrap gap-1 mt-1">
+                                {Object.entries(f.gst.riskCounts || {}).map(([flag, n]) => (
+                                  <span key={flag} className={`text-[9px] font-bold px-1.5 py-0.5 rounded border ${
+                                    flag === 'LOW' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : flag === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>{flag} {n}</span>
+                                ))}
+                                {!f.gst.modelAvailable && (
+                                  <span className="text-[9px] font-bold text-slate-400">model not trained</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        )}
 
                         {summary && summary.transactionCount > 0 && (
                           <div className="grid grid-cols-2 gap-1.5">
@@ -617,7 +656,6 @@ export default function Page2Pipeline({
 
       {/* 2. Data Pre-Processing & Feature Engineering Process (5 Steps) */}
       <SectionCard
-        n="2"
         title="Data Pre-Processing & Feature Engineering Process"
         sub="Stage 1: Vector Preprocessing, Normalization & Feature Selection"
         action={
@@ -701,7 +739,6 @@ export default function Page2Pipeline({
 
       {/* 3. AI Noise Inspection & Activation Box */}
       <SectionCard
-        n="3"
         title="AI Noise Inspection & Activation"
         sub={
           <>
@@ -733,7 +770,7 @@ export default function Page2Pipeline({
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">PROCESS VECTOR OUTPUT</span>
               <h2 className="text-sm font-bold text-slate-800">
-                4. Processed Dataset Table
+                Processed Dataset Table
               </h2>
             </div>
 
@@ -787,7 +824,7 @@ export default function Page2Pipeline({
           <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 3 OUTPUT</span>
             <h2 className="text-sm font-bold text-slate-800">
-              5. Normalize Data — MinMax &amp; Z-Score per Feature
+              Normalize Data — MinMax &amp; Z-Score per Feature
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
               Domain-bounded MinMax scaling to [0,1] and Z-score standardization against an assumed portfolio reference μ/σ.
@@ -829,7 +866,7 @@ export default function Page2Pipeline({
           <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 4 OUTPUT</span>
             <h2 className="text-sm font-bold text-slate-800">
-              6. Feature Engineering — Derived Temporal Ratios
+              Feature Engineering — Derived Temporal Ratios
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
               New variables computed from real monthly credit/debit &amp; average balance, beyond the base 9 extracted features.
@@ -871,7 +908,7 @@ export default function Page2Pipeline({
           <div className="border-b border-slate-200 pb-3">
             <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">STAGE 5 OUTPUT</span>
             <h2 className="text-sm font-bold text-slate-800">
-              7. Data Selection — High-Variance Feature Ranking
+              Data Selection — High-Variance Feature Ranking
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
               All 11 candidate features ranked by variance (sklearn); top {selectedFeatures.length} selected for the stored feature vector.
@@ -918,7 +955,7 @@ export default function Page2Pipeline({
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL SELECTION & TRAINING</span>
               <h2 className="text-sm font-bold text-slate-800">
-                8. Model Training Process
+                Model Training Process
               </h2>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">
@@ -989,7 +1026,7 @@ export default function Page2Pipeline({
           <div className="flex items-center justify-between border-b border-slate-200 pb-3">
             <div>
               <h2 className="text-sm font-bold text-slate-800">
-                9. Generated Models Output
+                Generated Models Output
               </h2>
               <p className="text-[10px] text-slate-500 font-mono">
                 Trained using: <strong className="text-slate-800 uppercase">{selectedMLAlgorithm.replace('_', ' ')}</strong>
@@ -1211,7 +1248,7 @@ export default function Page2Pipeline({
             <div>
               <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">MODEL REGISTRY & DEPLOYMENT</span>
               <h2 className="text-sm font-bold text-slate-800">
-                10. Model Version & Deployment Management Table
+                Model Version & Deployment Management Table
               </h2>
             </div>
             <span className="text-xs font-mono font-semibold text-slate-500">
@@ -1283,16 +1320,41 @@ export default function Page2Pipeline({
         </div>
       )}
 
-      {/* Footer Navigation */}
-      {readyModelsList.length > 0 && visibleModelsCount === readyModelsList.length && (
-        <div className="pt-6 border-t border-slate-200 flex justify-end">
-          <button
-            onClick={onNext}
-            className="px-7 py-3 rounded-xl font-bold text-xs btn-orange text-white shadow-lg shadow-orange-900/15 transition-all flex items-center space-x-2 cursor-pointer"
-          >
-            <span>Go to Model Testing (View Results)</span>
-            <ArrowRight className="w-4 h-4" />
-          </button>
+      {/* Footer */}
+      {(selectedIds.length > 0 || readyModelsList.length > 0) && (
+        <div className="pt-6 border-t border-slate-200 flex flex-wrap items-center justify-end gap-2.5">
+          {statusSaved && (
+            <span className="mr-auto text-[11px] font-bold text-emerald-600 inline-flex items-center gap-1">
+              <Check className="w-3.5 h-3.5 stroke-3" /> Saved as {statusSaved}
+            </span>
+          )}
+
+          {[
+            { v: 'published', label: 'Published', cls: 'btn-purple shadow-purple-950/25', Icon: Check },
+            { v: 'unpublished', label: 'Unpublished', cls: 'btn-red shadow-rose-950/25', Icon: Ban },
+            { v: 'draft', label: 'Draft', cls: 'btn-orange shadow-orange-900/20', Icon: PencilLine },
+          ].map(({ v, label, cls, Icon }) => (
+            <button
+              key={v}
+              type="button"
+              onClick={() => saveStatus(v)}
+              disabled={!selectedIds.length}
+              className={`px-6 py-3 rounded-xl text-xs font-bold shadow-lg transition-all cursor-pointer inline-flex items-center gap-2 disabled:cursor-not-allowed ${cls}`}
+            >
+              <Icon className="w-4 h-4" strokeWidth={2.5} />
+              {label}
+            </button>
+          ))}
+
+          {readyModelsList.length > 0 && visibleModelsCount === readyModelsList.length && (
+            <button
+              onClick={onNext}
+              className="px-7 py-3 rounded-xl font-bold text-xs btn-orange text-white shadow-lg shadow-orange-900/15 transition-all flex items-center space-x-2 cursor-pointer shrink-0"
+            >
+              <span>Go to Model Testing (View Results)</span>
+              <ArrowRight className="w-4 h-4" />
+            </button>
+          )}
         </div>
       )}
 

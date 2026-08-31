@@ -4,9 +4,7 @@ import OverviewDashboard from './components/OverviewDashboard';
 import Page1Selection from './components/Page1Selection';
 import Page2Pipeline from './components/Page2Pipeline';
 import Page3Inference from './components/Page3Inference';
-import AiArchitecture from './components/AiArchitecture';
-import SecurityDashboard from './components/SecurityDashboard';
-import Settings from './components/Settings';
+import SettingsPage from './components/SettingsPage';
 import DataDetailModal from './components/DataDetailModal';
 import LoginPage from './components/LoginPage';
 import { api } from './api/client';
@@ -22,8 +20,9 @@ export default function App() {
     }
   });
 
-  // Single active view state for Left Sidebar: 'overview' | 'products' | 'model_hub' | 'model_testing'
+  // Sidebar view. Settings uses nested ids: 'settings/bre' | 'settings/ai' | 'settings/security'.
   const [activeView, setActiveView] = useState('products');
+  const [uploadFocusId, setUploadFocusId] = useState(null); // which source the Model Hub upload card shows
 
   // Default: All 11 boxes UNSELECTED initially ([])
   const [selectedIds, setSelectedIds] = useState([]);
@@ -37,9 +36,13 @@ export default function App() {
   const [booting, setBooting] = useState(true);
   useEffect(() => {
     let cancelled = false;
-    api.post('/reset').catch(() => {}).finally(() => {
-      if (!cancelled) setBooting(false);
-    });
+    api.post('/reset')
+      .catch(() => {})
+      // Published data sources persist across reloads/restarts — rehydrate them.
+      .then(() => api.get('/data-sources/selection'))
+      .then((d) => { if (!cancelled && d?.selectedIds) setSelectedIds(d.selectedIds); })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setBooting(false); });
     return () => { cancelled = true; };
   }, []);
 
@@ -76,6 +79,7 @@ export default function App() {
       money_balance_model: "Ready"
     });
     api.post('/reset').catch(() => {});
+    api.put('/data-sources/selection', { selectedIds: [] }).catch(() => {});
   };
 
   const handleLoginSuccess = (userData) => {
@@ -139,7 +143,7 @@ export default function App() {
               selectedIds={selectedIds}
               setSelectedIds={setSelectedIds}
               onInspect={(src) => setInspectedSource(src)}
-              onNext={() => setActiveView('model_hub')}
+              onNext={(sid) => { setUploadFocusId(sid || null); setActiveView('model_hub'); }}
             />
           )}
 
@@ -147,6 +151,7 @@ export default function App() {
           {activeView === 'model_hub' && (
             <Page2Pipeline
               selectedIds={selectedIds}
+              focusSourceId={uploadFocusId}
               onNext={() => setActiveView('model_testing')}
               trainedModels={trainedModels}
               setTrainedModels={setTrainedModels}
@@ -168,19 +173,9 @@ export default function App() {
             />
           )}
 
-          {/* 5. AI Architecture Specifications */}
-          {activeView === 'ai_architecture' && (
-            <AiArchitecture />
-          )}
-
-          {/* 5b. ML Security & Governance */}
-          {activeView === 'ml_security' && (
-            <SecurityDashboard />
-          )}
-
-          {/* 6. System Settings */}
-          {activeView === 'settings' && (
-            <Settings />
+          {/* Settings — BRE rules · AI extraction stack · ML security */}
+          {activeView.startsWith('settings') && (
+            <SettingsPage section={activeView.split('/')[1] || 'bre'} />
           )}
 
         </main>

@@ -2,36 +2,38 @@ import { useEffect, useMemo, useState } from 'react';
 import { Search, ToggleLeft, ToggleRight, RotateCcw, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
 
-// Per-product BRE rule checklist. Catalogue + enabled state come from the
-// backend (GET /bre-products); toggles PUT back. These rules are real — the
-// Model Testing "BRE payload" tab evaluates the active product's enabled set
-// against the uploaded statement.
-export default function BreRuleChecklist({ productId }) {
-  const [product, setProduct] = useState(null); // { id, name, rules:[{id,label,serious}], enabled:{} }
+// Rule checklist for one (loan product × data source) pair. Catalogue is the
+// data-source rule catalogue; enabled state is tracked per product.
+// GET/PUT /bre-products/{productId}/sources/{sourceId}/rules
+export default function ProductSourceRuleChecklist({ productId, sourceId }) {
+  const [data, setData] = useState(null); // { rules:[{id,label}], enabled:{} }
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
 
-  const load = () =>
-    api.get('/bre-products')
-      .then((d) => setProduct((d.products || []).find((p) => p.id === productId) || null))
-      .catch(() => setProduct(null))
-      .finally(() => setLoading(false));
+  const base = `/bre-products/${productId}/sources/${sourceId}/rules`;
 
-  useEffect(() => { setLoading(true); load(); }, [productId]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    api.get(base)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData(null); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [base]);
 
-  const rules = product?.rules || [];
-  const enabled = product?.enabled || {};
+  const rules = data?.rules || [];
+  const enabled = data?.enabled || {};
   const isOn = (id) => !!enabled[id];
   const activeCount = rules.reduce((n, r) => n + (isOn(r.id) ? 1 : 0), 0);
-  const externalCount = rules.reduce((n, r) => n + (r.computable === false ? 1 : 0), 0);
 
   const put = (body) =>
-    api.put(`/bre-products/${productId}/rules`, body)
-      .then((d) => setProduct((p) => (p ? { ...p, enabled: d.enabled } : p)))
+    api.put(base, body)
+      .then((d) => setData((p) => (p ? { ...p, enabled: d.enabled } : p)))
       .catch(() => {});
 
   const toggle = (id) => {
-    setProduct((p) => (p ? { ...p, enabled: { ...p.enabled, [id]: !isOn(id) } } : p)); // optimistic
+    setData((p) => (p ? { ...p, enabled: { ...p.enabled, [id]: !isOn(id) } } : p));
     put({ enabled: { [id]: !isOn(id) } });
   };
   const setAll = (v) => put({ setAll: v });
@@ -53,8 +55,14 @@ export default function BreRuleChecklist({ productId }) {
       </div>
     );
   }
-  if (!product) {
-    return <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">No rule catalogue for this product.</p>;
+
+  if (!rules.length) {
+    return (
+      <div className="h-40 flex flex-col items-center justify-center gap-2 text-center text-xs text-slate-400">
+        <ToggleLeft className="w-6 h-6 text-slate-300" />
+        <span>No BRE rules have been configured for this data source.</span>
+      </div>
+    );
   }
 
   return (
@@ -62,7 +70,7 @@ export default function BreRuleChecklist({ productId }) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <span className="text-xs font-bold text-slate-800 bg-slate-100 border border-slate-200 px-3 py-1.5 rounded-lg whitespace-nowrap">
           {activeCount} / {rules.length} Active
-          <span className="text-slate-400 font-semibold"> · {externalCount} need an external feed</span>
+          <span className="text-slate-400 font-semibold"> · {rules.length - activeCount} off</span>
         </span>
         <div className="flex items-center gap-1.5">
           {(() => {
@@ -108,15 +116,6 @@ export default function BreRuleChecklist({ productId }) {
                 <span className={`text-xs font-semibold truncate ${on ? 'text-slate-800' : 'text-slate-400 line-through'}`}>
                   {r.label}
                 </span>
-                {r.serious && <span className="self-center text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1 shrink-0">KEY</span>}
-                {r.computable === false && (
-                  <span
-                    className="self-center text-[8px] font-black text-slate-500 bg-slate-100 border border-slate-200 rounded px-1 shrink-0"
-                    title="Needs an external feed (bureau / GST portal / property / asset docs) — evaluates to N/A"
-                  >
-                    EXT
-                  </span>
-                )}
               </div>
               <button
                 type="button"

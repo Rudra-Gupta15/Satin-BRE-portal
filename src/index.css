@@ -59,6 +59,31 @@
   opacity: 0.6;
 }
 
+/* Gradient status buttons — same treatment as .btn-orange, different hues */
+.btn-purple {
+  background-image: linear-gradient(135deg, #2e1065 0%, #4c1d95 55%, #6d28d9 100%);
+  color: #fff;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.btn-red {
+  background-image: linear-gradient(135deg, #ef4444 0%, #dc2626 55%, #991b1b 100%);
+  color: #fff;
+  transition: filter 0.15s ease, box-shadow 0.15s ease, transform 0.15s ease;
+}
+.btn-purple:hover:not(:disabled),
+.btn-red:hover:not(:disabled) {
+  filter: brightness(0.95) saturate(1.05);
+}
+.btn-purple:active:not(:disabled),
+.btn-red:active:not(:disabled) {
+  filter: brightness(0.88);
+}
+.btn-purple:disabled,
+.btn-red:disabled {
+  filter: grayscale(0.25);
+  opacity: 0.6;
+}
+
 /* Clean Card Panel */
 .clean-panel {
   background: #ffffff;

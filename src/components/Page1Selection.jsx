@@ -1,52 +1,66 @@
-import { useEffect, useState } from 'react';
-import { Check, ArrowRight, ArrowDownRight, Plus, X, Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowDownRight, Plus, X, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
-import BreRuleChecklist from './BreRuleChecklist';
+import ProductSourceRuleChecklist from './ProductSourceRuleChecklist';
 
-export default function Page1Selection({ selectedIds, setSelectedIds, onNext, onInspect }) {
+const STATUS_LABEL = {
+  published: 'Published',
+  unpublished: 'Unpublished',
+  draft: 'Draft',
+};
+
+const STATUS_BADGE = {
+  published: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+  draft: 'bg-amber-50 text-amber-700 border-amber-200',
+  unpublished: 'bg-slate-100 text-slate-500 border-slate-200',
+};
+
+export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) {
   const [sourcesList, setSourcesList] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [isBREModalOpen, setIsBREModalOpen] = useState(false);
-  const [breTab, setBreTab] = useState('product');
-  const [loanProducts, setLoanProducts] = useState([
-    { id: 'lap_sbl', name: 'LAP / SBL', desc: 'Loan against property / secured business loan for self-employed borrowers and SMEs.' },
-    { id: 'machine', name: 'Machine Loan', desc: 'Term financing for plant, machinery and equipment purchases.' },
-    { id: 'vehicle', name: 'Vehicle Loan', desc: 'Financing for new and used passenger and commercial vehicles.' },
-    { id: 'msme', name: 'MSME Loan', desc: 'Working-capital and growth funding for micro, small & medium enterprises.' },
-  ]);
-  const [newLoanName, setNewLoanName] = useState('');
-  const [selectedLoan, setSelectedLoan] = useState(null);
+  const [rulesSource, setRulesSource] = useState(null);
+  const [rulesProduct, setRulesProduct] = useState(null); // product tab inside the popup
+  const [statuses, setStatuses] = useState({});
+  const [usage, setUsage] = useState({});          // { sourceId: { productId: bool } }
+  const [productNames, setProductNames] = useState({});
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newFields, setNewFields] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const addLoanProduct = (e) => {
-    if (e) e.preventDefault();
-    const name = newLoanName.trim();
-    if (!name) return;
-    setLoanProducts((prev) => [
-      ...prev,
-      { id: `loan-${Date.now()}`, name, desc: 'Custom loan product added by user.' },
-    ]);
-    setNewLoanName('');
-  };
-
-  const selectLoan = (id) => {
-    setSelectedLoan((prev) => {
-      const next = prev === id ? null : id;
-      // Tell the backend which product the Model Testing BRE tab should evaluate.
-      api.put('/bre-products/active', { productId: next }).catch(() => {});
-      return next;
-    });
-  };
-
   useEffect(() => {
     api.get('/data-sources')
       .then((data) => setSourcesList(data.dataSources))
       .finally(() => setIsLoading(false));
+    api.get('/data-sources/status')
+      .then((d) => setStatuses(d.statuses || {}))
+      .catch(() => {});
+    api.get('/bre-products/source-usage')
+      .then((d) => { setUsage(d.usage || {}); setProductNames(d.productNames || {}); })
+      .catch(() => {});
   }, []);
+
+  const statusOf = (id) => statuses[id] || 'unpublished';
+
+  const productList = useMemo(() => Object.entries(productNames).map(([id, name]) => ({ id, name })), [productNames]);
+
+  const openRules = (source) => {
+    setRulesSource(source);
+    const u = usage[source.id] || {};
+    const firstActive = productList.find((p) => u[p.id])?.id;
+    setRulesProduct(firstActive || productList[0]?.id || null);
+  };
+
+  // "use this data source for the selected product" — same state as Settings › BRE Rule Setting
+  const toggleRulesSourceActive = (next) => {
+    if (!rulesSource || !rulesProduct) return;
+    setUsage((prev) => ({
+      ...prev,
+      [rulesSource.id]: { ...(prev[rulesSource.id] || {}), [rulesProduct]: next },
+    }));
+    api.put(`/bre-products/${rulesProduct}/sources/${rulesSource.id}/active`, { active: next }).catch(() => {});
+  };
 
   const persistSelection = (ids) => {
     setSelectedIds(ids);
@@ -59,17 +73,6 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
     } else {
       persistSelection([...selectedIds, id]);
     }
-  };
-
-  // "Apply" from the BRE dialog → Model Hub. Make sure at least one data source
-  // is selected (default: Account Aggregator bank statement) so the upload
-  // section actually shows there.
-  const applyAndGoToModelHub = () => {
-    if (selectedIds.length === 0) {
-      persistSelection(['account_aggregator']);
-    }
-    setIsBREModalOpen(false);
-    onNext();
   };
 
   const handleAddProduct = async (e) => {
@@ -146,6 +149,25 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
                 <p className="text-xs text-slate-500 leading-relaxed">
                   {source.shortDesc}
                 </p>
+
+                {/* Per-product usage — reflects the toggles in Settings › BRE Rule Setting */}
+                {usage[source.id] && Object.keys(usage[source.id]).length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1 pt-1">
+                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mr-0.5">Used by</span>
+                    {Object.entries(usage[source.id]).map(([p, on]) => (
+                      <span
+                        key={p}
+                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
+                          on
+                            ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            : 'bg-slate-50 text-slate-400 border-slate-200 line-through'
+                        }`}
+                      >
+                        {productNames[p] || p}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
 
               {/* Fixed footer — always at the bottom of the card, regardless of description length */}
@@ -153,25 +175,34 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsBREModalOpen(true);
+                    openRules(source);
                   }}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] shadow-sm shadow-purple-950/20 hover:brightness-110 transition-all cursor-pointer inline-flex items-center gap-1"
                 >
-                  <span>BRE Rule Training</span>
+                  <span>Data Source Rule</span>
                 </button>
 
-                {/* Select this source (if not already) and continue to Model Hub */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (!isSelected) toggleSource(source.id);
-                    onNext();
-                  }}
-                  title="Use this source & continue to Model Hub"
-                  className="w-7 h-7 rounded-full btn-orange text-white flex items-center justify-center shadow-sm transition-colors cursor-pointer shrink-0"
-                >
-                  <ArrowDownRight className="w-4 h-4" />
-                </button>
+                <div className="flex items-center gap-2">
+                  {/* Publish status (read-only — set from the Model Hub footer) */}
+                  <span
+                    className={`px-2.5 py-1 rounded-md text-[11px] font-bold border ${STATUS_BADGE[statusOf(source.id)]}`}
+                  >
+                    {STATUS_LABEL[statusOf(source.id)]}
+                  </span>
+
+                  {/* Use this source & continue to Model Hub (upload card focuses on it) */}
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (!isSelected) toggleSource(source.id);
+                      onNext(source.id);
+                    }}
+                    title="Upload data for this source in Model Hub"
+                    className="w-7 h-7 rounded-full btn-orange text-white flex items-center justify-center shadow-sm transition-colors cursor-pointer shrink-0"
+                  >
+                    <ArrowDownRight className="w-4 h-4" />
+                  </button>
+                </div>
               </div>
             </div>
           );
@@ -261,179 +292,93 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext, on
         </div>
       )}
 
-      {/* BRE Rule Training Modal */}
-      {isBREModalOpen && (
-        <div className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-3xl w-full max-w-2xl max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col">
-            {/* Sticky Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 rounded-t-3xl shrink-0">
-              <div>
-                <h2 className="text-lg font-extrabold text-slate-800">BRE Rule Training</h2>
-                <p className="text-xs text-slate-500">Underwriting &amp; Decisioning Rules Configuration</p>
+      {/* Data Source Rule popup */}
+      {rulesSource && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4"
+          onClick={() => setRulesSource(null)}
+        >
+          <div
+            className="bg-white rounded-3xl w-full max-w-xl max-h-[85vh] shadow-2xl border border-slate-200 flex flex-col"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="px-6 py-5 border-b border-slate-200 shrink-0 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-black uppercase tracking-[0.15em] text-purple-600">
+                    BRE Rules
+                  </p>
+                  <h2 className="text-base font-extrabold text-slate-800 leading-snug mt-0.5">
+                    {rulesSource.title}
+                  </h2>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    Rules are configured per loan product — the same toggles as Settings › BRE Rule Setting.
+                  </p>
+                </div>
+                <button
+                  onClick={() => setRulesSource(null)}
+                  className="p-2 -mr-1 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer shrink-0"
+                >
+                  <X className="w-5 h-5" />
+                </button>
               </div>
-              <button
-                onClick={() => setIsBREModalOpen(false)}
-                className="p-2 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Tab switcher + Apply */}
-            <div className="flex items-center justify-between gap-3 px-6 pt-4 shrink-0">
-              <div className="inline-flex items-center gap-1 p-1 rounded-xl bg-slate-100 border border-slate-200">
-                {[
-                  { id: 'product', label: 'Product' },
-                  { id: 'rules', label: 'BRE Rules' },
-                ].map((tab) => (
+              {/* Product tabs */}
+              <div className="flex flex-wrap items-center gap-1.5">
+                {productList.map((p) => {
+                  const on = !!(usage[rulesSource.id] || {})[p.id];
+                  const sel = rulesProduct === p.id;
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setRulesProduct(p.id)}
+                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
+                        sel
+                          ? 'bg-[#3b0764] text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${on ? (sel ? 'bg-emerald-300' : 'bg-emerald-500') : (sel ? 'bg-white/40' : 'bg-slate-300')}`} />
+                      {p.name}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Use this source for the selected product */}
+              {rulesProduct && (
+                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
+                  <span className="text-[11px] font-bold text-slate-700">
+                    Use <span className="text-purple-700">{rulesSource.title}</span> for {productNames[rulesProduct]}
+                  </span>
                   <button
-                    key={tab.id}
-                    onClick={() => setBreTab(tab.id)}
-                    className={`px-4 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                      breTab === tab.id
-                        ? 'bg-white text-slate-900 shadow-sm'
-                        : 'text-slate-500 hover:text-slate-800'
+                    type="button"
+                    role="switch"
+                    aria-checked={!!(usage[rulesSource.id] || {})[rulesProduct]}
+                    onClick={() => toggleRulesSourceActive(!(usage[rulesSource.id] || {})[rulesProduct])}
+                    className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full p-0.75 transition-colors cursor-pointer ${
+                      (usage[rulesSource.id] || {})[rulesProduct]
+                        ? 'bg-linear-to-r from-[#4c1d95] to-[#6d28d9]'
+                        : 'bg-slate-200 hover:bg-slate-300'
                     }`}
                   >
-                    {tab.label}
+                    <span className={`h-4 w-4 rounded-full bg-white shadow-md ring-1 ring-slate-900/5 transition-transform ${
+                      (usage[rulesSource.id] || {})[rulesProduct] ? 'translate-x-4.5' : 'translate-x-0'
+                    }`} />
                   </button>
-                ))}
-              </div>
-
-              {breTab === 'product' ? (
-                <button
-                  type="button"
-                  disabled={!selectedLoan}
-                  onClick={() => { if (selectedLoan) setBreTab('rules'); }}
-                  title={selectedLoan ? '' : 'Select a loan product first'}
-                  className={`px-5 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 ${
-                    selectedLoan
-                      ? 'btn-orange text-white shadow-md shadow-orange-900/15 cursor-pointer'
-                      : 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                  }`}
-                >
-                  <span>Apply BRE Rules</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={applyAndGoToModelHub}
-                  className="px-5 py-2 rounded-xl text-xs font-bold btn-orange text-white shadow-md shadow-orange-900/15 transition-all flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Check className="w-3.5 h-3.5 stroke-3" />
-                  <span>Apply</span>
-                </button>
+                </div>
               )}
             </div>
 
-            {/* Scrollable Content */}
-            <div
-              className="flex-1 overflow-y-auto p-4 pb-6 rounded-b-3xl"
-              style={{
-                scrollbarWidth: 'none',
-                msOverflowStyle: 'none',
-              }}
-            >
-              {breTab === 'product' && (
-                <div className="space-y-4 px-2 pt-1">
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="text"
-                      value={newLoanName}
-                      onChange={(e) => setNewLoanName(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') {
-                          e.preventDefault();
-                          addLoanProduct();
-                        }
-                      }}
-                      placeholder="Add a loan product e.g. Tractor Loan, Overdraft, Credit Card Loan..."
-                      className="flex-1 px-3.5 py-2 rounded-xl border border-slate-200 text-xs text-slate-800 focus:outline-none focus:border-[#ea580c] bg-slate-50/30"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => addLoanProduct()}
-                      className="px-4 py-2 rounded-xl text-xs font-bold btn-orange text-white shadow-md shadow-orange-900/15 transition-all flex items-center gap-1.5 shrink-0 cursor-pointer"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Add</span>
-                    </button>
-                  </div>
-
-                  <p className="text-[11px] font-semibold text-slate-500 px-1">
-                    Select a loan product to configure its BRE rules.
-                  </p>
-
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    {loanProducts.map((p) => {
-                      const isSel = selectedLoan === p.id;
-                      return (
-                        <div
-                          key={p.id}
-                          onClick={() => selectLoan(p.id)}
-                          className={`p-4 rounded-2xl border cursor-pointer transition-all ${
-                            isSel
-                              ? 'border-[#ea580c] bg-white ring-2 ring-[#fdba74] shadow-md shadow-slate-900/10'
-                              : 'border-slate-200 bg-white hover:border-slate-300 shadow-xs'
-                          }`}
-                        >
-                          <h4 className={`text-sm font-bold ${isSel ? 'text-slate-900' : 'text-slate-800'}`}>
-                            {p.name}
-                          </h4>
-                          <p className="text-[11px] text-slate-500 leading-relaxed mt-0.5">{p.desc}</p>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <p className="pt-2 text-[11px] text-slate-400">
-                    {selectedLoan
-                      ? 'Press “Apply BRE Rules” above to configure rules for this product.'
-                      : 'Select a loan product to continue.'}
-                  </p>
-                </div>
-              )}
-
-              {breTab === 'rules' && (
-                <div className="space-y-3 px-2">
-                  {selectedLoan ? (
-                    <>
-                      <div className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
-                        <span className="text-[11px] font-bold text-slate-800">Rules for:</span>
-                        <span className="text-[11px] font-semibold text-purple-800 bg-white border border-slate-200 rounded-full px-2 py-0.5">
-                          {loanProducts.find((p) => p.id === selectedLoan)?.name}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setBreTab('product')}
-                          className="ml-auto text-[11px] font-semibold text-purple-700 hover:underline cursor-pointer"
-                        >
-                          Change product
-                        </button>
-                      </div>
-                      <BreRuleChecklist productId={selectedLoan} />
-                    </>
-                  ) : (
-                    <div className="border border-dashed border-slate-300 rounded-xl p-8 text-center text-xs text-slate-500">
-                      Pick a loan product on the{' '}
-                      <button
-                        type="button"
-                        onClick={() => setBreTab('product')}
-                        className="font-bold text-purple-700 hover:underline"
-                      >
-                        Product
-                      </button>{' '}
-                      tab to see its BRE rules.
-                    </div>
-                  )}
-                </div>
-              )}
+            <div className="flex-1 overflow-y-auto px-6 py-5">
+              {rulesProduct
+                ? <ProductSourceRuleChecklist productId={rulesProduct} sourceId={rulesSource.id} />
+                : <p className="text-xs text-slate-400 text-center py-8">No loan products available.</p>}
             </div>
           </div>
         </div>
       )}
-
 
     </div>
   );

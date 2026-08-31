@@ -5,20 +5,26 @@ import {
   Database,
   Boxes,
   FlaskConical,
-  Sparkles,
-  ShieldCheck,
+  SlidersHorizontal,
+  ChevronDown,
 } from 'lucide-react';
 import Logo from './Logo';
 
-export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout }) {
+const SETTINGS_CHILDREN = [
+  { id: 'settings/bre', name: 'BRE Rule Setting' },
+  { id: 'settings/ai', name: 'AI Setting' },
+  { id: 'settings/security', name: 'ML Security' },
+];
+
+export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout, selectedSourcesCount = 0 }) {
   // Sidebar navigation items
   const sidebarItems = [
     { id: 'products', name: 'Data Sources', icon: Database },
-    { id: 'model_hub', name: 'Model Hub', icon: Boxes },
+    { id: 'model_hub', name: 'Model Hub', icon: Boxes, needsSource: true },
     { id: 'model_testing', name: 'Model Testing', icon: FlaskConical },
-    { id: 'ai_architecture', name: 'AI Intelligence', icon: Sparkles },
-    { id: 'ml_security', name: 'ML Security', icon: ShieldCheck },
   ];
+
+  const inSettings = activeView.startsWith('settings');
 
   return (
     <aside className="w-64 min-w-[16rem] max-w-[16rem] h-screen sticky top-0 bg-[#edeaf4] p-4 flex flex-col justify-between shrink-0 z-30 overflow-y-auto overflow-x-hidden">
@@ -41,21 +47,26 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
           {sidebarItems.map((item) => {
             const isSelected = activeView === item.id;
             const Icon = item.icon;
+            const locked = item.needsSource && selectedSourcesCount === 0;
 
             return (
               <button
                 key={item.id}
                 type="button"
+                disabled={locked}
                 onClick={() => setActiveView(item.id)}
-                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all cursor-pointer ${
-                  isSelected
-                    ? '-mr-4 bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold'
-                    : 'text-slate-600 hover:bg-white/60 font-semibold'
+                title={locked ? 'Select a data source first' : undefined}
+                className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all ${
+                  locked
+                    ? 'opacity-40 cursor-not-allowed text-slate-500 font-semibold'
+                    : isSelected
+                    ? '-mr-4 bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold cursor-pointer'
+                    : 'text-slate-600 hover:bg-white/60 font-semibold cursor-pointer'
                 }`}
               >
                 <span
                   className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                    isSelected ? 'bg-white/15 text-white' : 'bg-white text-[#3b0764] shadow-xs'
+                    isSelected && !locked ? 'bg-white/15 text-white' : 'bg-white text-[#3b0764] shadow-xs'
                   }`}
                 >
                   <Icon className="w-4.5 h-4.5" strokeWidth={2.2} />
@@ -64,6 +75,49 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
               </button>
             );
           })}
+
+          {/* Settings — expandable group */}
+          <button
+            type="button"
+            onClick={() => setActiveView(inSettings ? activeView : 'settings/bre')}
+            className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all cursor-pointer ${
+              inSettings
+                ? 'text-[#3b0764] font-bold bg-white/70'
+                : 'text-slate-600 hover:bg-white/60 font-semibold'
+            }`}
+          >
+            <span className="w-9 h-9 rounded-xl flex items-center justify-center shrink-0 bg-white text-[#3b0764] shadow-xs">
+              <SlidersHorizontal className="w-4.5 h-4.5" strokeWidth={2.2} />
+            </span>
+            <span className="text-sm truncate flex-1">Settings</span>
+            <ChevronDown
+              className={`w-4 h-4 shrink-0 transition-transform ${inSettings ? 'rotate-180' : 'text-slate-400'}`}
+              strokeWidth={2.2}
+            />
+          </button>
+
+          {inSettings && (
+            <div className="pl-5 space-y-1">
+              {SETTINGS_CHILDREN.map((c) => {
+                const on = activeView === c.id;
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setActiveView(c.id)}
+                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left text-[13.5px] transition-all cursor-pointer ${
+                      on
+                        ? 'bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold'
+                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/60 font-semibold'
+                    }`}
+                  >
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${on ? 'bg-white' : 'bg-slate-300'}`} />
+                    <span className="truncate">{c.name}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </nav>
 
       </div>

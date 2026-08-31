@@ -12,7 +12,7 @@ import {
 import { api } from '../api/client';
 import Select from './Select';
 
-export default function AiArchitecture() {
+export default function AiArchitecture({ hideHeader = false }) {
   const [selectedLLM, setSelectedLLM] = useState("gemma");
   const [isExtractingData, setIsExtractingData] = useState(false);
   const [dataExtracted, setDataExtracted] = useState(false);
@@ -154,17 +154,18 @@ export default function AiArchitecture() {
   };
 
   return (
-    <div className="space-y-6 pb-12 max-w-4xl mx-auto">
+    <div className={`space-y-6 pb-4 ${hideHeader ? '' : 'pb-12'}`}>
 
-      {/* Page Header */}
-      <div className="border-b border-slate-200 pb-4">
-        <h1 className="text-2xl font-extrabold text-slate-800">
-          AI Intelligence: Extraction & Processing
-        </h1>
-        <p className="text-xs text-slate-600 mt-1">
-          Select base AI models, connect to high-throughput vLLM serving engine, and manage data cleanliness thresholds.
-        </p>
-      </div>
+      {!hideHeader && (
+        <div className="border-b border-slate-200 pb-4">
+          <h1 className="text-2xl font-extrabold text-slate-800">
+            AI Intelligence: Extraction &amp; Processing
+          </h1>
+          <p className="text-xs text-slate-600 mt-1">
+            Select base AI models, connect to high-throughput vLLM serving engine, and manage data cleanliness thresholds.
+          </p>
+        </div>
+      )}
 
       {/* SECTION 1: Select AI Data Extraction Engine */}
       <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-4 shadow-xs">
