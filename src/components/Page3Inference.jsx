@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload, RefreshCw, Code, Table,
   Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
@@ -30,6 +30,534 @@ const GRADE_BADGE_STYLE = {
   HIGH: 'bg-rose-100 text-rose-800 border-rose-200'
 };
 
+const inr = (n) => (n == null ? '—' : `₹${Math.round(n).toLocaleString('en-IN')}`);
+const inrShort = (n) => {
+  if (n == null) return '—';
+  const a = Math.abs(n);
+  if (a >= 1e7) return `₹${(n / 1e7).toFixed(2)}Cr`;
+  if (a >= 1e5) return `₹${(n / 1e5).toFixed(1)}L`;
+  if (a >= 1e3) return `₹${(n / 1e3).toFixed(0)}k`;
+  return `₹${Math.round(n)}`;
+};
+
+const GST_SHORT_NAME = {
+  gst_underwriting_score_model: 'GST Score',
+  gst_risk_flag_model: 'GST Risk',
+  gst_loan_eligibility_model: 'GST Loan',
+  gst_filing_compliance_model: 'GST Filing',
+};
+
+const GST_HEAD_DESC = {
+  gst_underwriting_score_model: 'A Gradient-Boosting regressor that scores overall GST creditworthiness 0–100 from filing behaviour, turnover trend, ITC ratios and buyer concentration.',
+  gst_risk_flag_model: 'A Gradient-Boosting classifier that assigns a LOW / MEDIUM / HIGH GST risk band from the same filing, turnover and ITC signals.',
+  gst_loan_eligibility_model: 'A Gradient-Boosting regressor that estimates the maximum loan a business qualifies for under the GST turnover rule, from its filed turnover, ITC and vintage.',
+  gst_filing_compliance_model: 'A Gradient-Boosting regressor that predicts the on-time filing rate from filing delays, missed / late returns and turnover trend.',
+};
+
+// Headline metric (big number + badge) for the currently-focused GST head.
+function gstHeadline(modelId, heads, mode) {
+  const s = heads.gst_underwriting_score_model?.value;
+  const flag = heads.gst_risk_flag_model?.label;
+  const loan = heads.gst_loan_eligibility_model?.value;
+  const fil = heads.gst_filing_compliance_model?.value;
+  const flagBadge = { text: flag || '—', tone: flag || 'MEDIUM' };
+  const scoreBadge = {
+    text: s == null ? '—' : s >= 75 ? 'Strong' : s >= 55 ? 'Adequate (Review)' : 'Weak',
+    tone: s == null ? 'MEDIUM' : s >= 75 ? 'LOW' : s >= 55 ? 'MEDIUM' : 'HIGH',
+  };
+  switch (modelId) {
+    case 'gst_risk_flag_model':
+      return { big: flag || '—', unit: 'GST risk band', badge: flagBadge,
+        line: `Underwriting score ${s?.toFixed?.(1) ?? '—'} / 100` };
+    case 'gst_loan_eligibility_model':
+      return { big: inrShort(loan), unit: 'max eligible loan (GST turnover rule)', badge: scoreBadge,
+        line: `${inr(loan)} · score ${s?.toFixed?.(1) ?? '—'}` };
+    case 'gst_filing_compliance_model':
+      return { big: fil == null ? '—' : `${fil.toFixed(1)}%`, unit: 'predicted on-time filing rate', badge: scoreBadge,
+        line: `Filing regularity ${fil?.toFixed?.(1) ?? '—'}% · risk ${flag || '—'}` };
+    default:
+      return { big: s == null ? '—' : s.toFixed(1), unit: 'GST underwriting score / 100', badge: scoreBadge,
+        line: `Risk ${flag || '—'} · loan ${inrShort(loan)} · filing ${fil?.toFixed?.(0) ?? '—'}% · ${mode === 'returns' ? 'from GST returns' : 'from GST summary'}` };
+  }
+}
+
+const BADGE_TONE = {
+  LOW: 'bg-emerald-600 text-white', MEDIUM: 'bg-amber-500 text-white', HIGH: 'bg-rose-600 text-white',
+};
+
+function fmtMetric(m) {
+  if (m.kind === 'text') return m.value;
+  if (m.kind === 'money') return inrShort(m.value);
+  if (m.kind === 'pct') return `${m.value.toFixed(1)}%`;
+  return Number.isInteger(m.value) ? String(m.value) : m.value.toFixed(1);
+}
+function metricAssessment(m) {
+  const v = m.value;
+  if (m.label === 'Filing Regularity') return v >= 90 ? 'good' : v >= 75 ? 'ok' : 'watch';
+  if (m.label.includes('Growth YoY') || m.label.includes('Growth QoQ')) return v >= 0 ? 'good' : v >= -10 ? 'ok' : 'watch';
+  if (m.label === 'Missed Returns' || m.label === 'Late Returns') return v === 0 ? 'good' : v <= 2 ? 'ok' : 'watch';
+  if (m.label === 'Top Buyer Share') return v <= 30 ? 'good' : v <= 50 ? 'ok' : 'watch';
+  if (m.label === 'GST Status') return String(v).toUpperCase() === 'ACTIVE' ? 'good' : 'watch';
+  if (m.label === 'Buyer Concentration') return v === 'LOW' ? 'good' : v === 'MEDIUM' ? 'ok' : 'watch';
+  return null;
+}
+const ASSESS_STYLE = {
+  good: 'bg-emerald-100 border-emerald-200 text-emerald-800',
+  ok: 'bg-amber-100 border-amber-200 text-amber-900',
+  watch: 'bg-rose-100 border-rose-200 text-rose-800',
+};
+
+const GST_SUB_TABS = [
+  { id: 'output', label: 'Model Output' },
+  { id: 'metrics', label: 'GST Metrics' },
+  { id: 'factors', label: 'Top Factors' },
+  { id: 'rules', label: 'Rule Result' },
+  { id: 'bre', label: 'BRE payload' },
+];
+const GST_DECISION_STYLE = {
+  'APPROVED': 'bg-emerald-100 text-emerald-800 border-emerald-200',
+  'APPROVED WITH NOTES': 'bg-emerald-50 text-emerald-800 border-emerald-200',
+  'CONDITIONAL APPROVAL': 'bg-amber-100 text-amber-900 border-amber-200',
+  'REJECTED': 'bg-rose-100 text-rose-800 border-rose-200',
+};
+const RULE_PILL = (s) => s === 'PASS'
+  ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+  : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
+  : 'bg-slate-100 text-slate-500 border-slate-200';
+
+// Rule-evaluation list, paginated.
+function PaginatedRuleList({ results }) {
+  const PER = 5;
+  const [page, setPage] = useState(1);
+  useEffect(() => { setPage(1); }, [results]);
+  const pageCount = Math.max(1, Math.ceil(results.length / PER));
+  const p = Math.min(page, pageCount);
+  const from = (p - 1) * PER;
+  const slice = results.slice(from, from + PER);
+  const navBtn = 'px-2.5 py-1 rounded-md border border-slate-200 bg-white font-bold text-slate-700 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed';
+  return (
+    <div className="space-y-2">
+      <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
+        {slice.map((r, i) => (
+          <div key={r.id + i} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
+            <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${RULE_PILL(r.status)}`}>
+              {r.status === 'SKIP' ? 'N/A' : r.status}
+            </span>
+            <div className="min-w-0">
+              <div className="text-xs font-bold text-slate-800">
+                {r.label}
+                {r.serious && <span className="ml-1.5 text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1">KEY</span>}
+              </div>
+              <div className="text-[11px] text-slate-600">{r.detail}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {results.length > PER && (
+        <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
+          <span>Showing {from + 1}–{Math.min(from + PER, results.length)} of {results.length} rules</span>
+          <div className="flex items-center gap-1">
+            <button type="button" className={navBtn} disabled={p <= 1} onClick={() => setPage((x) => Math.max(1, x - 1))}>Prev</button>
+            <span className="px-2 text-slate-600">Page {p} / {pageCount}</span>
+            <button type="button" className={navBtn} disabled={p >= pageCount} onClick={() => setPage((x) => Math.min(pageCount, x + 1))}>Next</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// GST result — matches the bank-statement layout: tab bar, headline card,
+// turnover chart, metrics table, per-head cards, top factors, BRE payload.
+function GstTestResults({
+  bundle, isLoading, activeModelId, modelName, version, fileName, customId, onReprocess,
+  headModels = [], onSelectModel, tab = 'output', onSelectTab, bre, breLoading,
+  copiedPayload, onCopyPayload,
+}) {
+  if (isLoading && !bundle) {
+    return (
+      <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Scoring GST profile…
+      </div>
+    );
+  }
+  if (!bundle) return null;
+  if (!bundle.available) {
+    return (
+      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
+        {bundle.message || 'Upload a GST file on this page to score it.'}
+      </div>
+    );
+  }
+
+  const heads = bundle.headSummary || {};
+  const label = (customId || '').trim() || cleanStatementLabel(fileName) || 'GST Profile';
+  const returnsSeen = Object.entries(bundle.returnsSeen || {}).filter(([, v]) => v);
+  const detail = bundle.detail || [];
+  const primary = detail[0] || {};
+  const series = (primary.series || []).map((p) => ({ ...p, turnover: Number(p.turnover) || 0 }));
+  const metrics = primary.metrics || [];
+  const head = gstHeadline(activeModelId, heads, bundle.mode);
+  const multi = detail.length > 1 || (bundle.predictions?.length || 0) > 1;
+
+  return (
+    <div className="space-y-5">
+      {/* Statement-style header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+        <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+          <h2 className="text-xl font-extrabold text-slate-800">GST Profile — {label}</h2>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-extrabold font-mono text-purple-900">
+            {isLoading ? 'SCORING' : 'SCORED'}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md border bg-emerald-100 border-emerald-200 text-emerald-800 text-[10px] font-extrabold font-mono">
+            YOUR UPLOADED DATA
+          </span>
+          <span className="text-xs text-slate-500 font-semibold">
+            {bundle.businesses} business{bundle.businesses === 1 ? '' : 'es'} · {bundle.mode === 'returns' ? 'GST returns' : 'GST summary'}
+            {returnsSeen.length > 0 && ` · ${returnsSeen.map(([k, v]) => `${k} ×${v}`).join(' ')}`}
+          </span>
+        </div>
+        {onReprocess && (
+          <button
+            type="button"
+            onClick={onReprocess}
+            className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+          >
+            Reprocess process
+          </button>
+        )}
+      </div>
+
+      {/* Tab bar — the 4 GST models + sub-views (mirrors the bank tabs) */}
+      <div className="border-b border-slate-200 flex space-x-5 overflow-x-auto">
+        {headModels.map((m) => {
+          const isActive = tab === 'output' && activeModelId === m.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => { onSelectModel?.(m.id); onSelectTab?.('output'); }}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {m.name} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+        <span className="w-px bg-slate-200 my-1 shrink-0" aria-hidden />
+        {GST_SUB_TABS.filter((t) => t.id !== 'output').map((t) => {
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onSelectTab?.(t.id)}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {t.label}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ─────────── RULE RESULT TAB ─────────── */}
+      {tab === 'rules' && (
+        <div className="space-y-4 animate-fadeIn">
+          {breLoading && (
+            <div className="py-10 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
+              <Loader2 className="w-4 h-4 animate-spin" /> Evaluating GST BRE rules…
+            </div>
+          )}
+
+          {!breLoading && bre && bre.available === false && (
+            <div className="border border-amber-200 rounded-2xl p-5 bg-amber-50 text-amber-900 text-xs font-semibold">
+              {bre.message}
+            </div>
+          )}
+
+          {!breLoading && bre?.evaluation && (
+            <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+                <div>
+                  <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
+                    GST BRE Rule Evaluation
+                  </span>
+                  <h2 className="text-lg font-bold text-slate-800">Underwriting Decision</h2>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    GST underwriting score {bre.evaluation.creditScore} · gate ≥ {bre.evaluation.gateThreshold}
+                    {bre.businessCount > 1 && ` · business #1 of ${bre.businessCount}`}
+                  </p>
+                </div>
+                <span className={`px-4 py-2 rounded-xl border text-sm font-extrabold ${GST_DECISION_STYLE[bre.evaluation.decision] || 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                  {bre.evaluation.decision}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  ['PASSED', bre.evaluation.passed, 'text-emerald-700'],
+                  ['FAILED', bre.evaluation.failed, 'text-rose-700'],
+                  ['NOT EVALUATED', bre.evaluation.skipped, 'text-slate-400'],
+                  ['RULES ENABLED', bre.evaluation.enabledCount, 'text-slate-800'],
+                ].map(([lbl, val, color]) => (
+                  <div key={lbl} className="p-3 rounded-xl bg-slate-50/60 border border-slate-200">
+                    <div className="text-[9px] font-mono font-bold text-slate-400 uppercase">{lbl}</div>
+                    <div className={`text-xl font-extrabold font-mono ${color}`}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {bre.evaluation.seriousFlags?.length > 0 && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-2.5">
+                  <div className="text-[10px] font-bold text-rose-800 uppercase flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Serious flags driving the decision
+                  </div>
+                  <div className="text-xs text-rose-800 font-medium">{bre.evaluation.seriousFlags.join(' · ')}</div>
+                </div>
+              )}
+
+              <PaginatedRuleList results={bre.evaluation.results} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─────────── BRE PAYLOAD TAB (raw JSON) ─────────── */}
+      {tab === 'bre' && (
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Code className="w-4 h-4 text-purple-700" /> BRE Output Payload (JSON)
+            </h2>
+            <button
+              type="button"
+              onClick={() => onCopyPayload?.(bre?.payload)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                copiedPayload ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {copiedPayload ? <><Check className="w-3.5 h-3.5" />Copied</> : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
+            </button>
+          </div>
+          <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
+            {bre?.payload ? JSON.stringify(bre.payload, null, 2) : (breLoading ? 'Evaluating…' : 'No payload yet.')}
+          </pre>
+        </div>
+      )}
+
+      {/* ─────────── TOP FACTORS TAB ─────────── */}
+      {tab === 'factors' && (
+        <div className="space-y-3 animate-fadeIn">
+          <p className="text-[11px] text-slate-500">
+            Per model — the inputs each GST head weights most, ranked by importance × distance from the training-corpus
+            average (σ). {multi ? 'Business #1 of the file.' : ''}
+          </p>
+          {[
+            'gst_underwriting_score_model', 'gst_risk_flag_model',
+            'gst_loan_eligibility_model', 'gst_filing_compliance_model',
+          ].filter((id) => heads[id]).map((id) => {
+            const hf = primary.prediction?.headScores?.[id]?.topFactors || [];
+            return (
+              <div key={id} className={`border rounded-2xl p-4 bg-white shadow-sm space-y-2.5 ${id === activeModelId ? 'border-[#ea580c] ring-1 ring-orange-200' : 'border-slate-200'}`}>
+                <h3 className="text-xs font-bold text-slate-800">{heads[id].name}</h3>
+                {hf.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {hf.slice(0, 6).map((f, i) => (
+                      <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <span className="text-slate-700 truncate">{f.feature}</span>
+                        <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                          {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">No standout factors for this profile.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─────────── GST METRICS TAB ─────────── */}
+      {tab === 'metrics' && (
+        <div className="space-y-4 animate-fadeIn">
+          {metrics.length > 0 && (
+            <div className="border border-slate-200 rounded-2xl p-5 bg-white shadow-sm space-y-3">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Table className="w-4 h-4 text-purple-700" /> GST Underwriting Metrics {multi ? '(business #1)' : ''}
+              </h3>
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                    <tr>
+                      <th className="py-2.5 px-3">Metric</th>
+                      <th className="py-2.5 px-3 text-right">Value</th>
+                      <th className="py-2.5 px-3">Assessment</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-purple-100 bg-white">
+                    {metrics.map((m, i) => {
+                      const a = metricAssessment(m);
+                      return (
+                        <tr key={i} className="hover:bg-slate-50/30 text-slate-800">
+                          <td className="py-2 px-3 font-bold text-slate-800">{m.label}</td>
+                          <td className="py-2 px-3 text-right font-extrabold text-slate-900">{fmtMetric(m)}</td>
+                          <td className="py-2 px-3">
+                            {a && (
+                              <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${ASSESS_STYLE[a]}`}>
+                                {a === 'good' ? 'Healthy' : a === 'ok' ? 'Watch' : 'Concern'}
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          {multi && (
+            <div className="space-y-2">
+              <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                <Building2 className="w-4 h-4 text-purple-700" /> Per-business results ({bundle.predictions?.length || detail.length})
+              </h3>
+              <div className="overflow-x-auto border border-slate-200 rounded-2xl">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                    <tr>
+                      <th className="py-2.5 px-3">#</th>
+                      <th className="py-2.5 px-3">Score</th>
+                      <th className="py-2.5 px-3">Risk</th>
+                      <th className="py-2.5 px-3 text-right">Loan Eligibility</th>
+                      <th className="py-2.5 px-3 text-right">Filing %</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100 bg-white">
+                    {(bundle.predictions || []).map((p, i) => (
+                      <tr key={i} className="hover:bg-slate-50/40 text-slate-800">
+                        <td className="py-2 px-3 text-slate-400">{i + 1}</td>
+                        <td className="py-2 px-3 font-bold">{p.underwritingScore?.toFixed?.(1) ?? p.underwritingScore}</td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${BADGE_TONE[p.riskFlag] || 'bg-slate-100 text-slate-700'}`}>
+                            {p.riskFlag}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-right">{inrShort(p.headScores?.gst_loan_eligibility_model?.value)}</td>
+                        <td className="py-2 px-3 text-right">
+                          {p.headScores?.gst_filing_compliance_model?.value != null
+                            ? `${p.headScores.gst_filing_compliance_model.value.toFixed(1)}%` : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─────────── MODEL OUTPUT TAB ─────────── */}
+      {tab === 'output' && (<>
+      {(() => {
+        const hm = heads[activeModelId] || {};
+        const desc = hm.desc || GST_HEAD_DESC[activeModelId];
+        const hf = primary.prediction?.headScores?.[activeModelId]?.topFactors || [];
+        return (
+      <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-5 shadow-sm animate-fadeIn">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-3 gap-4">
+          <div className="min-w-0">
+            <span className="text-[10px] font-mono uppercase text-purple-600 font-bold block">MODEL OUTPUT RESULT</span>
+            <h2 className="text-lg font-bold text-slate-800">{modelName || 'GST Underwriting'} Output</h2>
+            {desc && <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed max-w-xl">{desc}</p>}
+          </div>
+          <div className="text-right shrink-0">
+            <span className={`px-3 py-1 rounded-lg text-xs font-bold font-mono inline-block shadow-sm ${BADGE_TONE[head.badge.tone] || BADGE_TONE.MEDIUM}`}>
+              {head.badge.text}
+            </span>
+            <div className="text-xs font-mono font-bold text-purple-900 mt-1">{head.line}</div>
+          </div>
+        </div>
+
+        {/* big headline number */}
+        <div className="flex items-end gap-3">
+          <div className="text-4xl font-extrabold text-slate-900 font-mono leading-none">{head.big}</div>
+          <div className="text-[11px] text-slate-400 pb-1">{head.unit}</div>
+          <div className="ml-auto text-[11px] font-mono text-slate-500 text-right">
+            {(hm.algorithm ? hm.algorithm.replace('_', ' ') : 'gradient boosting').toUpperCase()}
+            {hm.metricLine && <> · {hm.metricLine}</>}
+          </div>
+        </div>
+
+        {/* what moved this specific result — per-head drivers */}
+        {hf.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 space-y-2">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+              What moved this result {multi ? '· business #1' : ''} — the inputs {modelName?.replace(' Model', '')} weights most, furthest from the corpus average
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {hf.slice(0, 6).map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <span className="text-slate-600 truncate">{f.feature}</span>
+                  <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                    {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* turnover chart */}
+        <div>
+          <h3 className="text-xs font-bold text-slate-700 mb-3">
+            {bundle.mode === 'returns'
+              ? 'Filed Taxable Turnover — month by month'
+              : 'Estimated Turnover Trajectory (12 months)'}
+          </h3>
+          {series.length > 1 ? (
+            <div className="h-64 w-full bg-slate-50/40 border border-slate-200 rounded-xl p-4">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={series}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#e9d5ff" />
+                  <XAxis dataKey="period" stroke="#3b0764" tick={{ fontSize: 10 }} />
+                  <YAxis
+                    stroke="#3b0764"
+                    tick={{ fontSize: 10 }}
+                    tickFormatter={(v) => inrShort(v)}
+                    width={64}
+                  />
+                  <Tooltip
+                    formatter={(v) => [inr(v), 'Turnover']}
+                    contentStyle={{ backgroundColor: '#ffffff', borderColor: '#d8cefa', borderRadius: '12px', fontSize: '11px' }}
+                  />
+                  <Area type="monotone" dataKey="turnover" stroke="#6d28d9" fill="#6d28d9" fillOpacity={0.22} strokeWidth={2.5} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <div className="h-24 flex items-center justify-center text-[11px] text-slate-400 bg-slate-50/40 border border-slate-200 rounded-xl">
+              Not enough periods in this file to plot a turnover trend.
+            </div>
+          )}
+        </div>
+
+      </div>
+        );
+      })()}
+      </>)}
+    </div>
+  );
+}
+
 export default function Page3Inference({
   selectedIds = [],
   trainedModels = [],
@@ -45,9 +573,23 @@ export default function Page3Inference({
   ];
 
   const modelsList = trainedModels && trainedModels.length > 0 ? trainedModels : allModels;
-  const deployedModels = modelsList.filter(m => deployedStatusMap[m.id] === "Deployed");
 
   const [allSources, setAllSources] = useState([]);
+  const [gstReg, setGstReg] = useState(null);      // GST registry: { versions, active, deployed, heads }
+  const [gstBundle, setGstBundle] = useState(null); // GST score-testing result
+
+  // Deployed GST heads (from the GST registry) sit alongside the deployed bank models.
+  const gstDeployedModels = (gstReg?.versions?.length ? gstReg.heads || [] : [])
+    .filter(h => gstReg?.deployed?.[h.id] ?? true)
+    .map(h => ({ id: h.id, name: h.name, kind: 'gst' }));
+  const deployedModels = [
+    ...modelsList.filter(m => m.kind !== 'gst' && deployedStatusMap[m.id] === "Deployed"),
+    ...gstDeployedModels,
+  ];
+  // The model list is scoped to the selected input data source: a bank-statement
+  // source shows the bank models, the GST source shows the GST heads.
+  const modelsForSource = (srcId) =>
+    deployedModels.filter(m => (srcId === 'gst_data' ? m.kind === 'gst' : m.kind !== 'gst'));
   // Multi-select: which deployed models are in scope (default = all of them).
   const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
   // Which one's results are currently shown.
@@ -59,6 +601,9 @@ export default function Page3Inference({
   const [customBankName, setCustomBankName] = useState("");
 
   const [activeTab, setActiveTab] = useState('analytics');
+  const [gstTab, setGstTab] = useState('output');       // GST result sub-tab
+  const [gstBre, setGstBre] = useState(null);           // GST BRE eval result
+  const [gstBreLoading, setGstBreLoading] = useState(false);
   const [bundle, setBundle] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -82,7 +627,17 @@ export default function Page3Inference({
   const openHistoryEntry = async (row) => {
     try {
       const saved = await api.get(`/inference/history/${row.rowId}`);
-      setBundle(saved);
+      sourceInitRef.current = true; // don't let the source-change effect wipe this
+      if (saved && saved._kind === 'gst') {
+        setSelectedInputSourceId('gst_data');
+        setSelectedModelId('gst_underwriting_score_model');
+        setGstBundle(saved);
+        setGstTab('output');
+        setBundle(null);
+      } else {
+        setBundle(saved);
+        setGstBundle(null);
+      }
       setHasTested(true);
       setViewingHistory({ id: row.rowId, label: row.id });
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -95,24 +650,45 @@ export default function Page3Inference({
     setViewingHistory(null);
     setHasTested(false);
     setBundle(null);
+    setGstBundle(null);
     setLoadError('');
     loadHistory();
   };
 
   useEffect(() => {
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
+    api.get('/gst/model/registry').then(setGstReg).catch(() => {});
     loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const selectedSources = allSources.filter(s => selectedIds.includes(s.id));
 
+  // Input data sources the tester can pick from — the ones chosen on the Data
+  // Sources page, plus GST if any GST head is deployed.
+  const sourceOptions = (() => {
+    const base = selectedSources.length > 0
+      ? selectedSources.map(s => ({ value: s.id, label: s.title }))
+      : [{ value: 'account_aggregator', label: 'Account Aggregator (AA) — Bank Statement' }];
+    if (gstDeployedModels.length && !base.some(o => o.value === 'gst_data')) {
+      base.push({ value: 'gst_data', label: 'GST Data — GSTR-1 / 3B / 2A / 2B' });
+    }
+    return base;
+  })();
+
+  // Models available for the currently-selected input source.
+  const sourceModels = modelsForSource(selectedInputSourceId);
+
   // `selectedModelIds` stays null until the user first toggles — a null set
-  // means "all deployed models", i.e. everything is selected by default.
-  const chosenModelIds = selectedModelIds ?? deployedModels.map(m => m.id);
+  // means "all models for this source". Anything not in this source is dropped.
+  const chosenModelIds = (() => {
+    const raw = selectedModelIds ?? sourceModels.map(m => m.id);
+    const f = raw.filter(id => sourceModels.some(m => m.id === id));
+    return f.length ? f : sourceModels.map(m => m.id);
+  })();
   const isModelChosen = (id) => chosenModelIds.includes(id);
   const toggleModelChosen = (id) => {
     setSelectedModelIds((prev) => {
-      const base = prev ?? deployedModels.map(m => m.id);
+      const base = (prev ?? sourceModels.map(m => m.id)).filter(x => sourceModels.some(m => m.id === x));
       if (base.includes(id)) {
         if (base.length === 1) return base;            // keep at least one
         const next = base.filter(x => x !== id);
@@ -124,15 +700,20 @@ export default function Page3Inference({
   };
 
   // The model whose results are shown: the focused one if it's still chosen,
-  // else the first chosen, else the first deployed.
+  // else the first chosen, else the first for this source.
   const activeModelId =
-    (isModelChosen(selectedModelId) && deployedModels.some(m => m.id === selectedModelId) && selectedModelId) ||
-    chosenModelIds.find(id => deployedModels.some(m => m.id === id)) ||
-    deployedModels[0]?.id ||
+    (isModelChosen(selectedModelId) && sourceModels.some(m => m.id === selectedModelId) && selectedModelId) ||
+    chosenModelIds.find(id => sourceModels.some(m => m.id === id)) ||
+    sourceModels[0]?.id ||
     "risk_model";
 
-  const activeModelObj = modelsList.find(m => m.id === activeModelId) || { name: "Risk Model" };
-  const activeVersion = selectedVersionMap[activeModelId] || "v3.4";
+  const activeModelObj = deployedModels.find(m => m.id === activeModelId)
+    || modelsList.find(m => m.id === activeModelId)
+    || { name: "Risk Model" };
+  const isGstActive = activeModelObj?.kind === 'gst';
+  const activeVersion = isGstActive
+    ? (gstReg?.active ? `v${gstReg.active}` : '')
+    : (selectedVersionMap[activeModelId] || "v3.4");
 
   // `record` = deliberate run (upload / Run Analysis). On those, we log a history
   // row for EVERY selected model (not just the one shown) so all scanned models
@@ -141,6 +722,28 @@ export default function Page3Inference({
     setIsLoading(true);
     setLoadError('');
     const customId = (id || '').trim() || 'applicant';
+
+    // GST heads share one scoring call against the GST file uploaded on this page.
+    if (deployedModels.find(m => m.id === modelId)?.kind === 'gst') {
+      try {
+        const g = await api.get('/gst/score-testing');
+        setGstBundle(g);
+        setGstBre(null);
+        setBundle(null);
+        setHasTested(true);
+        setViewingHistory(null);
+        if (!g.available) setLoadError(g.message || 'No GST file uploaded on this page yet.');
+        else if (record) {
+          api.post('/gst/record-test', { customId, fileName: inputFileName }).then(loadHistory).catch(() => {});
+        }
+      } catch (err) {
+        setLoadError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
     try {
       const data = await api.post('/inference/run', {
         modelId, customId, bankName: bank, sourceId, record,
@@ -151,7 +754,8 @@ export default function Page3Inference({
 
       if (record) {
         // background-record the other selected models, then refresh the list
-        const others = chosenModelIds.filter((m) => m !== modelId);
+        const gstIds = new Set(gstDeployedModels.map((g) => g.id));
+        const others = chosenModelIds.filter((m) => m !== modelId && !gstIds.has(m));
         await Promise.allSettled(
           others.map((m) =>
             api.post('/inference/run', { modelId: m, customId, bankName: bank, sourceId, record: true }),
@@ -166,12 +770,41 @@ export default function Page3Inference({
     }
   };
 
-  // Re-run when the model or input source changes — but only once a test has
-  // actually been run on this page (never auto-run on first load, never while
-  // viewing a saved history entry).
+  // Switching the input source resets the model list AND clears the previous
+  // result — a new source needs its own upload, never the last file's output.
+  const sourceInitRef = useRef(true);
+  useEffect(() => {
+    setSelectedModelIds(null);
+    setSelectedModelId(modelsForSource(selectedInputSourceId)[0]?.id || 'risk_model');
+    if (sourceInitRef.current) { sourceInitRef.current = false; return; }
+    setHasTested(false);
+    setBundle(null);
+    setGstBundle(null);
+    setGstBre(null);
+    setBreRun(null);
+    setInputFileName('');
+    setInputUploadInfo('');
+    setLoadError('');
+    setGstTab('output');
+    setActiveTab('analytics');
+  }, [selectedInputSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Evaluate the GST BRE rules when the "Rule Result" / "BRE payload" tab opens.
+  useEffect(() => {
+    if ((gstTab !== 'rules' && gstTab !== 'bre') || !gstBundle?.available || gstBre || gstBreLoading) return;
+    setGstBreLoading(true);
+    api.post('/gst/bre-evaluate')
+      .then(setGstBre)
+      .catch((err) => setGstBre({ available: false, message: err.message }))
+      .finally(() => setGstBreLoading(false));
+  }, [gstTab, gstBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-run when the focused model changes — but only once a test has actually
+  // been run on this page (never on first load, never while viewing history).
+  // Source changes do NOT re-run: they clear and wait for a fresh upload.
   useEffect(() => {
     if (hasTested && !viewingHistory) runInference(activeModelId, customId, customBankName, selectedInputSourceId);
-  }, [activeModelId, selectedInputSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeModelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounce customId/bankName edits — again, only after the first real run.
   useEffect(() => {
@@ -201,16 +834,28 @@ export default function Page3Inference({
       form.append('scope', 'testing');
       const data = await api.postForm('/pipeline/uploads', form);
       setInputFileName(file.name);
+
+      // GST file → the GST subsystem parsed & scored it; go straight to GST results.
+      const gst = data?.statement?.gst || data?.uploadedFiles?.gst_data?.[0]?.gst;
+      if (selectedInputSourceId === 'gst_data' || gst) {
+        const nb = gst?.businesses ?? gst?.records ?? 0;
+        setInputUploadInfo(nb ? `${nb} GST business${nb === 1 ? '' : 'es'} scored` : 'GST file parsed');
+        let gstModelId = activeModelObj?.kind === 'gst' ? activeModelId : gstDeployedModels[0]?.id;
+        if (gstModelId && gstModelId !== activeModelId) { setSelectedModelId(gstModelId); }
+        await runInference(gstModelId || activeModelId, customId, customBankName, 'gst_data', true);
+        return;
+      }
+
       const sum = data?.statement?.summary || {};
-      const n = sum.transactionCount ?? 0;
+      const n = sum.transactionCount ?? (data?.statement?.transactions?.length ?? 0);
       const bank = sum.bankName;
       if (bank) setCustomBankName((prev) => prev || bank);
-      if (n > 0) {
-        setInputUploadInfo(`${n} transactions parsed${sum.accountHolder ? ` · ${sum.accountHolder}` : ''}`);
-        await runInference(activeModelId, customId, customBankName || bank || '', selectedInputSourceId, true);
-      } else {
-        setInputUploadInfo('No transactions could be read from this file');
-      }
+      setInputUploadInfo(n > 0
+        ? `${n} transactions parsed${sum.accountHolder ? ` · ${sum.accountHolder}` : ''}`
+        : 'No transactions could be read from this file — the result below is simulated');
+      // Always score, even on a weak parse — otherwise the results panel is left
+      // blank / showing a stale bundle until the model is switched.
+      await runInference(activeModelId, customId, customBankName || bank || '', selectedInputSourceId, true);
     } catch (err) {
       setLoadError(err.message);
       setInputUploadInfo('');
@@ -291,10 +936,23 @@ export default function Page3Inference({
             <label className="text-xs font-bold text-slate-800 block mb-1">
               1. Select Models:
             </label>
-            {deployedModels.length > 0 ? (
+            {sourceOptions.length > 1 && (
+              <div className="mb-2">
+                <Select
+                  value={selectedInputSourceId}
+                  onChange={setSelectedInputSourceId}
+                  options={sourceOptions}
+                  buttonClassName="w-full flex items-center justify-between gap-2 bg-purple-50/50 border border-purple-200 rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-purple-900 cursor-pointer hover:border-purple-300"
+                />
+                <p className="text-[10px] text-slate-400 mt-1">Models shown match this data source.</p>
+              </div>
+            )}
+            {sourceModels.length > 0 ? (
               <div className="space-y-1.5">
-                {deployedModels.map((m) => {
-                  const ver = selectedVersionMap[m.id] || "v3.4";
+                {sourceModels.map((m) => {
+                  const ver = m.kind === 'gst'
+                    ? (gstReg?.active ? `v${gstReg.active}` : '')
+                    : (selectedVersionMap[m.id] || "v3.4");
                   const chosen = isModelChosen(m.id);
                   const focused = activeModelId === m.id;
                   return (
@@ -329,12 +987,14 @@ export default function Page3Inference({
               </div>
             ) : (
               <div className="p-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-purple-800 font-semibold">
-                No models deployed
+                {deployedModels.length === 0
+                  ? 'No models deployed'
+                  : `No ${selectedInputSourceId === 'gst_data' ? 'GST' : 'bank-statement'} model deployed for this source`}
               </div>
             )}
           </div>
           <span className="text-[10px] font-mono text-slate-500 block truncate mt-1">
-            <strong className="text-slate-800">{chosenModelIds.length}</strong> of {deployedModels.length} selected
+            <strong className="text-slate-800">{chosenModelIds.length}</strong> of {sourceModels.length} selected
           </span>
         </div>
 
@@ -352,11 +1012,7 @@ export default function Page3Inference({
                 <Select
                   value={selectedInputSourceId}
                   onChange={setSelectedInputSourceId}
-                  options={
-                    selectedSources.length > 0
-                      ? selectedSources.map((s) => ({ value: s.id, label: s.title }))
-                      : [{ value: 'account_aggregator', label: 'Account Aggregator (AA) — Bank Statement' }]
-                  }
+                  options={sourceOptions}
                   buttonClassName="w-full flex items-center justify-between gap-2 bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-2 text-xs font-semibold text-slate-800 cursor-pointer hover:border-slate-300"
                 />
               </div>
@@ -470,7 +1126,38 @@ export default function Page3Inference({
         </button>
       </div>
 
-      {hasTested && (
+      {/* ── GST results — a GST head is the active model ── */}
+      {hasTested && isGstActive && (
+        <GstTestResults
+          bundle={gstBundle}
+          isLoading={isLoading}
+          activeModelId={activeModelId}
+          modelName={activeModelObj?.name}
+          version={activeVersion}
+          fileName={inputFileName}
+          customId={customId}
+          onReprocess={onReprocessPipeline}
+          headModels={sourceModels.map((m) => ({
+            id: m.id, name: GST_SHORT_NAME[m.id] || m.name,
+            version: gstReg?.active ? `v${gstReg.active}` : '',
+          }))}
+          onSelectModel={(id) => { setSelectedModelId(id); setGstTab('output'); }}
+          tab={gstTab}
+          onSelectTab={setGstTab}
+          bre={gstBre}
+          breLoading={gstBreLoading}
+          copiedPayload={copiedPayload}
+          onCopyPayload={(payload) => {
+            if (!payload) return;
+            navigator.clipboard?.writeText(JSON.stringify(payload, null, 2)).then(
+              () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
+              () => {},
+            );
+          }}
+        />
+      )}
+
+      {hasTested && !isGstActive && (
       <>
       {/* ── results ── */}
 
@@ -536,8 +1223,12 @@ export default function Page3Inference({
         {(viewingHistory
           ? [{ id: bundle?.model?.id || activeModelId, name: bundle?.model?.name || 'Model', version: bundle?.model?.version }]
           : chosenModelIds.map((mid) => {
-              const m = modelsList.find((x) => x.id === mid) || { id: mid, name: mid };
-              return { id: mid, name: m.name, version: selectedVersionMap[mid] || 'v3.4' };
+              const dm = deployedModels.find((x) => x.id === mid);
+              const m = dm || modelsList.find((x) => x.id === mid) || { id: mid, name: mid };
+              const version = dm?.kind === 'gst'
+                ? (gstReg?.active ? `v${gstReg.active}` : '')
+                : (selectedVersionMap[mid] || 'v3.4');
+              return { id: mid, name: m.name, version };
             })
         ).map((m) => {
           const isActive = activeTab === 'analytics' && (viewingHistory || activeModelId === m.id);
@@ -565,6 +1256,7 @@ export default function Page3Inference({
           { id: 'transactions', label: 'Transactions' },
           { id: 'risk_score', label: 'Credit Score' },
           { id: 'anomalies', label: 'Anomalies' },
+          { id: 'rule_result', label: 'Rule Result' },
           { id: 'bre_payload', label: 'BRE payload' },
         ].map((tab) => {
           const isActive = activeTab === tab.id;
@@ -972,43 +1664,45 @@ export default function Page3Inference({
       )}
 
       {/* TAB 6: BRE PAYLOAD */}
+      {/* TAB: BRE PAYLOAD (raw JSON only) */}
       {activeTab === 'bre_payload' && brePayload && (
-        <div className="space-y-4 animate-fadeIn">
-          <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm">
-            <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-              <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-                <Code className="w-4 h-4 text-purple-700" />
-                BRE Output Payload (JSON)
-              </h2>
-              <button
-                type="button"
-                onClick={() => {
-                  const text = JSON.stringify(brePayload, null, 2);
-                  navigator.clipboard?.writeText(text).then(
-                    () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
-                    () => {},
-                  );
-                }}
-                className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
-                  copiedPayload
-                    ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
-                    : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
-                }`}
-              >
-                {copiedPayload
-                  ? <><Check className="w-3.5 h-3.5" />Copied</>
-                  : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
-              </button>
-            </div>
-
-            <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
-              {JSON.stringify(brePayload, null, 2)}
-            </pre>
-
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Code className="w-4 h-4 text-purple-700" />
+              BRE Output Payload (JSON)
+            </h2>
+            <button
+              type="button"
+              onClick={() => {
+                const text = JSON.stringify(brePayload, null, 2);
+                navigator.clipboard?.writeText(text).then(
+                  () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
+                  () => {},
+                );
+              }}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                copiedPayload
+                  ? 'bg-emerald-50 border-emerald-200 text-emerald-700'
+                  : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {copiedPayload
+                ? <><Check className="w-3.5 h-3.5" />Copied</>
+                : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
+            </button>
           </div>
+          <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
+            {JSON.stringify(brePayload, null, 2)}
+          </pre>
+        </div>
+      )}
 
+      {/* TAB: RULE RESULT (BRE rule evaluation) */}
+      {activeTab === 'rule_result' && (
+        <div className="space-y-4 animate-fadeIn">
           {breLoading && (
-            <div className="py-8 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
+            <div className="py-10 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span>Evaluating BRE rules against this applicant's data…</span>
             </div>
@@ -1020,6 +1714,12 @@ export default function Page3Inference({
             </div>
           )}
 
+          {!breLoading && !breRun && (
+            <div className="border border-slate-200 rounded-2xl p-5 bg-white text-slate-500 text-xs font-semibold">
+              Run an analysis to see the BRE rule evaluation.
+            </div>
+          )}
+
           {breRun && breRun.available !== false && (() => {
             const DECISION_STYLE = {
               'APPROVED': 'bg-emerald-100 text-emerald-800 border-emerald-200',
@@ -1027,10 +1727,6 @@ export default function Page3Inference({
               'CONDITIONAL APPROVAL': 'bg-amber-100 text-amber-900 border-amber-200',
               'REJECTED': 'bg-rose-100 text-rose-800 border-rose-200',
             };
-            const pill = (s) => s === 'PASS'
-              ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-              : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
-              : 'bg-slate-100 text-slate-500 border-slate-200';
             return (
               <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
@@ -1071,22 +1767,7 @@ export default function Page3Inference({
                   </div>
                 )}
 
-                <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
-                  {breRun.results.map((r, i) => (
-                    <div key={r.id + i} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
-                      <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${pill(r.status)}`}>
-                        {r.status === 'SKIP' ? 'N/A' : r.status}
-                      </span>
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-slate-800">
-                          {r.label}
-                          {r.serious && <span className="ml-1.5 text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1">KEY</span>}
-                        </div>
-                        <div className="text-[11px] text-slate-600">{r.detail}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                <PaginatedRuleList results={breRun.results} />
               </div>
             );
           })()}
@@ -1113,15 +1794,16 @@ export default function Page3Inference({
               <table className="w-full text-left text-xs">
                 <thead className="bg-slate-50/70 text-slate-500 text-[10px] uppercase tracking-wider font-bold border-b border-slate-200">
                   <tr>
-                    <th className="py-2 px-4">Applicant / ID</th>
-                    <th className="py-2 px-4">Bank</th>
-                    <th className="py-2 px-4">Model</th>
-                    <th className="py-2 px-4">Data</th>
-                    <th className="py-2 px-4 text-right">Score</th>
-                    <th className="py-2 px-4">Grade</th>
-                    <th className="py-2 px-4">Decision</th>
-                    <th className="py-2 px-4">Txns</th>
-                    <th className="py-2 px-4">When</th>
+                    <th className="py-2 px-3">Src</th>
+                    <th className="py-2 px-3">Applicant / ID</th>
+                    <th className="py-2 px-3">Bank</th>
+                    <th className="py-2 px-3">Model</th>
+                    <th className="py-2 px-3">Data</th>
+                    <th className="py-2 px-3 text-right">Score</th>
+                    <th className="py-2 px-3">Grade</th>
+                    <th className="py-2 px-3">Decision</th>
+                    <th className="py-2 px-3">Txns</th>
+                    <th className="py-2 px-3">When</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
@@ -1129,40 +1811,53 @@ export default function Page3Inference({
                     const gradeKey = (h.grade || '').toUpperCase().includes('LOW') ? 'LOW'
                       : (h.grade || '').toUpperCase().includes('MED') ? 'MEDIUM'
                       : (h.grade || '').toUpperCase().includes('HIGH') ? 'HIGH' : null;
-                    const modelName = h.model || (modelsList.find((m) => m.id === h.modelId) || {}).name || h.modelId;
-                    const live = h.dataSource === 'UPLOADED_STATEMENT';
+                    const mdls = h.models && h.models.length ? h.models
+                      : [{ model: h.model || (modelsList.find((m) => m.id === h.modelId) || {}).name || h.modelId, version: h.version }];
+                    const isGst = String(h.dataSource || '').startsWith('GST') || h.modelId === 'gst_models';
+                    const live = h.dataSource === 'UPLOADED_STATEMENT' || isGst;
+                    const modelText = mdls.length > 1
+                      ? `${mdls.length} models · ${mdls.map((x) => x.model.replace(/ Model$/, '')).join(', ')}`
+                      : `${mdls[0].model}${mdls[0].version ? ` ${mdls[0].version}` : ''}`;
                     return (
                       <tr
                         key={i}
                         onClick={() => h.rowId && openHistoryEntry(h)}
-                        className={`hover:bg-purple-50/40 ${h.rowId ? 'cursor-pointer' : ''}`}
+                        className={`hover:bg-purple-50/40 whitespace-nowrap ${h.rowId ? 'cursor-pointer' : ''}`}
                         title={h.rowId ? 'Open this application’s saved output' : ''}
                       >
-                        <td className="py-2 px-4 font-bold text-slate-800 underline decoration-slate-300 decoration-dotted underline-offset-2">
+                        <td className="py-2.5 px-3">
+                          <span className={`px-1.5 py-0.5 rounded text-[9px] font-black tracking-wide ${
+                            isGst ? 'bg-purple-100 text-purple-800' : 'bg-sky-100 text-sky-800'
+                          }`}>
+                            {isGst ? 'GST' : 'AA'}
+                          </span>
+                        </td>
+                        <td className="py-2.5 px-3 font-bold text-slate-800 max-w-47.5 truncate underline decoration-slate-300 decoration-dotted underline-offset-2" title={h.id}>
                           {h.id}
                         </td>
-                        <td className="py-2 px-4 text-slate-600">{h.bank}</td>
-                        <td className="py-2 px-4 text-slate-600">
-                          {modelName}{h.version ? <span className="text-slate-400 font-mono"> {h.version}</span> : null}
+                        <td className="py-2.5 px-3 text-slate-600 max-w-27.5 truncate" title={h.bank}>{h.bank}</td>
+                        <td className="py-2.5 px-3 text-slate-500 max-w-65 truncate" title={modelText}>
+                          {mdls.length > 1 && <span className="font-semibold text-slate-700">{mdls.length} models</span>}
+                          {mdls.length > 1 ? ` · ${mdls.map((x) => x.model.replace(/ Model$/, '')).join(', ')}` : modelText}
                         </td>
-                        <td className="py-2 px-4">
+                        <td className="py-2.5 px-3">
                           <span className={`px-1.5 py-0.5 rounded text-[9px] font-extrabold ${
                             live ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-500'
                           }`}>
                             {live ? 'LIVE' : 'SAMPLE'}
                           </span>
                         </td>
-                        <td className="py-2 px-4 text-right font-bold text-slate-900">{h.riskScore ?? '—'}</td>
-                        <td className="py-2 px-4">
+                        <td className="py-2.5 px-3 text-right font-bold text-slate-900">{h.riskScore ?? '—'}</td>
+                        <td className="py-2.5 px-3">
                           <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${
                             gradeKey ? GRADE_BADGE_STYLE[gradeKey] : 'bg-slate-100 text-slate-500 border-slate-200'
                           }`}>
                             {h.grade || '—'}
                           </span>
                         </td>
-                        <td className="py-2 px-4 text-slate-600">{h.decision || '—'}</td>
-                        <td className="py-2 px-4 text-slate-500">{h.txCount ?? '—'}</td>
-                        <td className="py-2 px-4 text-slate-400 whitespace-nowrap">
+                        <td className="py-2.5 px-3 text-slate-600 max-w-32.5 truncate" title={h.decision || ''}>{h.decision || '—'}</td>
+                        <td className="py-2.5 px-3 text-slate-500">{h.txCount ?? '—'}</td>
+                        <td className="py-2.5 px-3 text-slate-400">
                           {h.date ? new Date(h.date).toLocaleString() : '—'}
                         </td>
                       </tr>

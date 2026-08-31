@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, ChevronRight, Loader2, ScrollText, Database } from 'lucide-react';
+import { ArrowLeft, ChevronRight, Loader2, ScrollText, Database, Info } from 'lucide-react';
 import { api } from '../api/client';
 import ProductSourceRuleChecklist from './ProductSourceRuleChecklist';
 
@@ -10,6 +10,7 @@ export default function BreProductSettings() {
   const [pid, setPid] = useState(null);
   const [sources, setSources] = useState(null);
   const [sid, setSid] = useState(null);
+  const [infoFor, setInfoFor] = useState(null);  // product id whose explanation is open
 
   useEffect(() => {
     api.get('/bre-products')
@@ -41,23 +42,6 @@ export default function BreProductSettings() {
       className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-900 transition-colors cursor-pointer"
     >
       <ArrowLeft className="w-4 h-4" /> {label}
-    </button>
-  );
-
-  const Card = ({ icon: Icon, title, subtitle, onClick }) => (
-    <button
-      type="button"
-      onClick={onClick}
-      className="group w-full flex items-center gap-4 text-left border border-slate-200 rounded-2xl bg-white shadow-sm px-5 py-4 hover:border-purple-200 hover:shadow-md transition-all cursor-pointer"
-    >
-      <span className="grid place-items-center w-10 h-10 rounded-xl bg-purple-50 text-purple-700 shrink-0 group-hover:bg-purple-100 transition-colors">
-        <Icon className="w-5 h-5" />
-      </span>
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-bold text-slate-900">{title}</span>
-        {subtitle != null && <span className="block text-[11px] text-slate-500 mt-0.5">{subtitle}</span>}
-      </span>
-      <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-purple-500 group-hover:translate-x-0.5 transition-all shrink-0" />
     </button>
   );
 
@@ -175,9 +159,52 @@ export default function BreProductSettings() {
         <p className="text-xs text-slate-500 mt-1">Pick a loan product to configure its BRE rules.</p>
       </div>
       <div className="space-y-2.5">
-        {products.map((p) => (
-          <Card key={p.id} icon={ScrollText} title={p.name} onClick={() => openProduct(p.id)} />
-        ))}
+        {products.map((p) => {
+          const open = infoFor === p.id;
+          return (
+            <div
+              key={p.id}
+              className="group border border-slate-200 rounded-2xl bg-white shadow-sm hover:border-purple-200 hover:shadow-md transition-all"
+            >
+              <div className="flex items-center gap-4 px-5 py-4">
+                <span className="grid place-items-center w-10 h-10 rounded-xl bg-purple-50 text-purple-700 shrink-0 group-hover:bg-purple-100 transition-colors">
+                  <ScrollText className="w-5 h-5" />
+                </span>
+                <button
+                  type="button"
+                  onClick={() => openProduct(p.id)}
+                  className="min-w-0 flex-1 text-left cursor-pointer"
+                >
+                  <span className="block text-sm font-bold text-slate-900">{p.name}</span>
+                </button>
+                {p.description && (
+                  <button
+                    type="button"
+                    aria-label={`What is ${p.name}?`}
+                    aria-expanded={open}
+                    title="What is this?"
+                    onClick={() => setInfoFor(open ? null : p.id)}
+                    className={`grid place-items-center w-7 h-7 rounded-lg border shrink-0 transition-colors cursor-pointer ${
+                      open
+                        ? 'border-purple-300 bg-purple-50 text-purple-700'
+                        : 'border-slate-200 text-slate-400 hover:text-purple-600 hover:border-purple-200'
+                    }`}
+                  >
+                    <Info className="w-4 h-4" />
+                  </button>
+                )}
+                <button type="button" onClick={() => openProduct(p.id)} className="shrink-0 cursor-pointer">
+                  <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-purple-500 group-hover:translate-x-0.5 transition-all" />
+                </button>
+              </div>
+              {open && p.description && (
+                <p className="px-5 pb-4 -mt-1 text-[11px] leading-relaxed text-slate-600 border-t border-slate-100 pt-3">
+                  {p.description}
+                </p>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

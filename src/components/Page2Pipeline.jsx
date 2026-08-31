@@ -76,6 +76,7 @@ export default function Page2Pipeline({
   const [normalizeTable, setNormalizeTable] = useState([]);   // Stage 3: raw / MinMax / Z-score per feature
   const [engineeredTable, setEngineeredTable] = useState([]); // Stage 4: derived temporal-ratio features
   const [selectionTable, setSelectionTable] = useState([]);   // Stage 5: variance ranking + selected flag
+  const [selectionPage, setSelectionPage]   = useState(1);    // Stage 5 table pagination (10/page)
 
   // Training state & ML Algorithm Selection
   const [selectedDatasetFile, setSelectedDatasetFile] = useState("processed_features_vector.csv");
@@ -84,7 +85,9 @@ export default function Page2Pipeline({
   const [trainingDone, setTrainingDone] = useState(false);
   const [visibleModelsCount, setVisibleModelsCount] = useState(0);
   const [readyModelsList, setReadyModelsList] = useState([]);
-  const [realFeatures, setRealFeatures]       = useState(null);  // real extracted features
+  const [gstRegistry, setGstRegistry] = useState(null);  // { versions, active, deployed } for the GST heads
+  const [realFeatures, setRealFeatures]       = useState(null);  // real extracted features (bank)
+  const [gstFeatures, setGstFeatures]         = useState(null);  // headline GST corpus aggregates
   const [trainingTxCount, setTrainingTxCount] = useState(0);     // # transactions used
 
   // Model Evaluation (real 5-fold CV, computed at training time)
@@ -143,6 +146,9 @@ export default function Page2Pipeline({
       setReadyModelsList(trainedModels);
       setVisibleModelsCount(trainedModels.length);
       setTrainingDone(true);
+      if (trainedModels.some((m) => m.kind === 'gst')) {
+        api.get('/gst/model/registry').then(setGstRegistry).catch(() => {});
+      }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -191,14 +197,29 @@ export default function Page2Pipeline({
     } catch {
       return; // user cancelled the picker
     }
+    // Walk the folder AND its subfolders (up to 3 levels) so picking a parent
+    // folder still finds the files inside.
     const files = [];
-    for await (const entry of dirHandle.values()) {
-      if (entry.kind === 'file' && isAccepted(entry.name)) {
-        try { files.push(await entry.getFile()); } catch { /* skip unreadable */ }
+    let totalFiles = 0;
+    const walk = async (handle, depth) => {
+      for await (const entry of handle.values()) {
+        if (entry.kind === 'file') {
+          totalFiles += 1;
+          if (isAccepted(entry.name)) {
+            try { files.push(await entry.getFile()); } catch { /* skip unreadable */ }
+          }
+        } else if (entry.kind === 'directory' && depth < 3) {
+          await walk(entry, depth + 1);
+        }
       }
-    }
+    };
+    await walk(dirHandle, 0);
     if (files.length === 0) {
-      alert('That folder has no PDF / CSV / TSV / TXT / JSON / MD / XLSX statement files.');
+      alert(
+        totalFiles === 0
+          ? 'That folder is empty.'
+          : `That folder has no PDF / CSV / TSV / TXT / JSON / MD / XLSX files (found ${totalFiles} other file${totalFiles === 1 ? '' : 's'}).`
+      );
       return;
     }
     handleFolderUpload(id, files);
@@ -229,10 +250,12 @@ export default function Page2Pipeline({
       // Styled result popup (our own — shown once the parse finishes).
       const metas = data?.files || [];
       const ok = metas.filter((m) => !m.error);
+      const gstMeta = ok.find((m) => m.gst)?.gst;
       setUploadResult({
         sourceTitle: allSources.find((s) => s.id === id)?.title || id,
         ok,
         totalTx: ok.reduce((n, m) => n + (m.transactionsParsed ?? m.statementSummary?.transactionCount ?? 0), 0),
+        gst: gstMeta || null,
         skipped: data?.skipped || [],
       });
     } catch (err) {
@@ -264,6 +287,30 @@ export default function Page2Pipeline({
     }
   };
 
+  // GST heads share one versioned artifact — rolling the version rolls all 4.
+  const handleGstVersionChange = async (version) => {
+    const n = parseInt(String(version).replace(/^v/, ''), 10);
+    if (!Number.isFinite(n)) return;
+    try {
+      const reg = await api.put('/gst/model/active', { version: n });
+      setGstRegistry(reg);
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
+  const handleGstDeploy = async (headId) => {
+    setGstRegistry(prev => prev
+      ? { ...prev, deployed: { ...prev.deployed, [headId]: !prev.deployed?.[headId] } }
+      : prev);
+    try {
+      const data = await api.post(`/gst/model/${headId}/deploy`);
+      setGstRegistry(prev => (prev ? { ...prev, deployed: data.deployed } : prev));
+    } catch {
+      /* optimistic update already applied */
+    }
+  };
+
   // Run Process (Steps 1..5): the backend actually executes all 5 stages
   // (cleaning, MinMax/Z-score normalization, feature engineering, variance-based
   // selection) and returns each stage's real elapsed time + a description of
@@ -280,7 +327,9 @@ export default function Page2Pipeline({
 
     let result;
     try {
-      result = await api.post('/pipeline/run', { selectedIds });
+      result = await api.post('/pipeline/run', {
+        selectedIds: activeUpload ? [activeUpload.id] : selectedIds,
+      });
     } catch (err) {
       setIsPipelineRunning(false);
       setPipelineStep(0);
@@ -303,6 +352,7 @@ export default function Page2Pipeline({
     setNormalizeTable(result.normalizeTable || []);
     setEngineeredTable(result.engineeredTable || []);
     setSelectionTable(result.selectionTable || []);
+    setSelectionPage(1);
     setShowProcessedTable(true);
   };
 
@@ -313,12 +363,14 @@ export default function Page2Pipeline({
     setVisibleModelsCount(0);
     setTrainingDone(false);
     setRealFeatures(null);
+    setGstFeatures(null);
 
     let data;
     try {
       data = await api.post('/models/train', {
         algorithm: selectedMLAlgorithm,
         datasetFile: selectedDatasetFile,
+        sourceId: activeUpload ? activeUpload.id : null,
       });
     } catch (err) {
       setIsTrainingRunning(false);
@@ -327,7 +379,9 @@ export default function Page2Pipeline({
     }
 
     setReadyModelsList(data.models);
-    if (data.realFeatures) setRealFeatures(data.realFeatures);
+    if (data.realFeatures && Object.keys(data.realFeatures).length) setRealFeatures(data.realFeatures);
+    if (data.gstFeatureSummary) setGstFeatures(data.gstFeatureSummary);
+    if (data.gstRegistry) setGstRegistry(data.gstRegistry);
     if (data.txCount)      setTrainingTxCount(data.txCount);
 
     let modelCount = 0;
@@ -402,7 +456,9 @@ export default function Page2Pipeline({
               (n, f) => n + (f.transactionsParsed ?? f.statementSummary?.transactionCount ?? 0), 0
             );
             const isGst = files.some(f => f.gst);
+            const gstReturns = files.some(f => f.gst?.mode === 'returns');
             const totalGstRecords = files.reduce((n, f) => n + (f.gst?.records ?? 0), 0);
+            const totalGstBiz = files.reduce((n, f) => n + (f.gst?.businesses ?? 0), 0);
 
             // File cards are paged 2-up so a big folder isn't one long scroll.
             const PER_PAGE = 2;
@@ -425,6 +481,8 @@ export default function Page2Pipeline({
                       <div className="text-[11px] text-slate-500 truncate">
                         {!hasFiles
                           ? 'No folder uploaded'
+                          : gstReturns
+                          ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalGstBiz} business${totalGstBiz === 1 ? '' : 'es'}`
                           : isGst
                           ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalGstRecords} GST record${totalGstRecords === 1 ? '' : 's'}`
                           : `${files.length} file${files.length === 1 ? '' : 's'} · ${totalTx} txn${totalTx === 1 ? '' : 's'}`}
@@ -514,12 +572,24 @@ export default function Page2Pipeline({
 
                         {f.gst && (
                           <div className="grid grid-cols-2 gap-1.5">
-                            <StatTile label="GST records" value={f.gst.records} />
+                            <StatTile
+                              label={f.gst.mode === 'returns' ? 'Businesses' : 'GST records'}
+                              value={f.gst.mode === 'returns' ? (f.gst.businesses ?? f.gst.records) : f.gst.records}
+                            />
                             <StatTile
                               label="Avg score"
                               tone="text-purple-700"
                               value={f.gst.avgUnderwritingScore != null ? f.gst.avgUnderwritingScore : '—'}
                             />
+                            {f.gst.mode === 'returns' && f.gst.returnsSeen && (
+                              <div className="col-span-2 flex flex-wrap gap-1">
+                                {Object.entries(f.gst.returnsSeen).filter(([, n]) => n > 0).map(([t, n]) => (
+                                  <span key={t} className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200">
+                                    {t} ×{n}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                             <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
                               <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">Risk flags</div>
                               <div className="flex flex-wrap gap-1 mt-1">
@@ -794,7 +864,7 @@ export default function Page2Pipeline({
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
                 {processedTableRows.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/30 text-slate-800">
+                  <tr key={idx} className={`hover:bg-slate-50/30 text-slate-800 ${row.kind === 'gst' ? 'bg-purple-50/40' : ''}`}>
                     <td className="py-2 px-3 font-bold text-slate-800">{row.id}</td>
                     <td className="py-2 px-3">{row.adb}</td>
                     <td className="py-2 px-3">{row.gstDelta}</td>
@@ -805,6 +875,8 @@ export default function Page2Pipeline({
                       <span className={`w-32 inline-block text-center py-0.5 rounded-md text-[10px] font-bold ${
                         row.status === 'Normalized'
                           ? 'bg-slate-50 border border-slate-200 text-slate-800'
+                          : row.status === 'GST scored'
+                          ? 'bg-emerald-50 border border-emerald-200 text-emerald-800'
                           : 'bg-amber-50 border border-amber-200 text-amber-800'
                       }`}>
                         {row.status}
@@ -911,7 +983,8 @@ export default function Page2Pipeline({
               Data Selection — High-Variance Feature Ranking
             </h2>
             <p className="text-[10px] text-slate-500 font-mono mt-0.5">
-              All 11 candidate features ranked by variance (sklearn); top {selectedFeatures.length} selected for the stored feature vector.
+              {selectionTable.filter((r) => r.kind !== 'gst').length} bank-statement features ranked by variance (sklearn)
+              {selectionTable.some((r) => r.kind === 'gst') && ` + ${selectionTable.filter((r) => r.kind === 'gst').length} GST underwriting features`}.
             </p>
           </div>
 
@@ -926,10 +999,18 @@ export default function Page2Pipeline({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
-                {selectionTable.map((row) => (
-                  <tr key={row.rank} className="hover:bg-slate-50/30 text-slate-800">
+                {selectionTable
+                  .slice(
+                    (Math.min(selectionPage, Math.ceil(selectionTable.length / 10) || 1) - 1) * 10,
+                    Math.min(selectionPage, Math.ceil(selectionTable.length / 10) || 1) * 10,
+                  )
+                  .map((row) => (
+                  <tr key={row.rank} className={`hover:bg-slate-50/30 text-slate-800 ${row.kind === 'gst' ? 'bg-purple-50/40' : ''}`}>
                     <td className="py-2 px-3 font-bold text-slate-800">#{row.rank}</td>
-                    <td className="py-2 px-3 text-slate-700">{row.feature}</td>
+                    <td className="py-2 px-3 text-slate-700">
+                      {row.feature}
+                      {row.kind === 'gst' && <span className="ml-2 text-[8px] font-black text-purple-700 bg-purple-100 border border-purple-200 rounded px-1">GST</span>}
+                    </td>
                     <td className="py-2 px-3 text-right">{row.variance === null ? '—' : row.variance}</td>
                     <td className="py-2 px-3">
                       <span className={`w-20 inline-block text-center py-0.5 rounded-md text-[10px] font-bold ${
@@ -945,6 +1026,37 @@ export default function Page2Pipeline({
               </tbody>
             </table>
           </div>
+
+          {selectionTable.length > 10 && (() => {
+            const pageCount = Math.ceil(selectionTable.length / 10);
+            const page = Math.min(selectionPage, pageCount);
+            const from = (page - 1) * 10 + 1;
+            const to = Math.min(page * 10, selectionTable.length);
+            return (
+              <div className="flex items-center justify-between text-[11px] font-mono text-slate-500">
+                <span>Showing {from}–{to} of {selectionTable.length} features</span>
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setSelectionPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1}
+                    className="px-2.5 py-1 rounded-md border border-slate-200 bg-white font-bold text-slate-700 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Prev
+                  </button>
+                  <span className="px-2 text-slate-600">Page {page} / {pageCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectionPage((p) => Math.min(pageCount, p + 1))}
+                    disabled={page >= pageCount}
+                    className="px-2.5 py-1 rounded-md border border-slate-200 bg-white font-bold text-slate-700 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            );
+          })()}
         </div>
       )}
 
@@ -1041,7 +1153,9 @@ export default function Page2Pipeline({
             {readyModelsList.slice(0, visibleModelsCount).map((model) => (
               <div
                 key={model.id}
-                className="p-4 rounded-xl border border-slate-200 bg-slate-50/40 space-y-2 transition-all duration-500 animate-fadeIn"
+                className={`p-4 rounded-xl border space-y-2 transition-all duration-500 animate-fadeIn ${
+                  model.kind === 'gst' ? 'border-purple-200 bg-purple-50/40' : 'border-slate-200 bg-slate-50/40'
+                }`}
               >
                 <div className="flex items-center justify-between">
                   <h3 className="font-bold text-sm text-slate-800">{model.name}</h3>
@@ -1056,9 +1170,16 @@ export default function Page2Pipeline({
                 </div>
                 <p className="text-xs text-slate-500">{model.desc}</p>
                 <div className="text-[9px] font-mono text-purple-700 font-semibold">
-                  Algorithm: {selectedMLAlgorithm.replace('_', ' ').toUpperCase()}
+                  Algorithm: {model.kind === 'gst'
+                    ? (model.algorithm || 'Gradient Boosting').toUpperCase()
+                    : selectedMLAlgorithm.replace('_', ' ').toUpperCase()}
                 </div>
-                {model.cvFolds && (
+                {model.kind === 'gst' ? (
+                  <div className="text-[9px] font-mono text-slate-400 space-y-0.5">
+                    <div>{model.sampleCount?.toLocaleString?.('en-IN') ?? model.sampleCount} GST profiles · {model.features} features · v{model.version}</div>
+                    <div>{model.metricLine}</div>
+                  </div>
+                ) : model.cvFolds && (
                   <div className="text-[9px] font-mono text-slate-400">
                     {model.cvFolds}-fold CV · {model.sampleCount} samples
                   </div>
@@ -1066,6 +1187,40 @@ export default function Page2Pipeline({
               </div>
             ))}
           </div>
+
+          {/* Headline GST corpus aggregates — shown for the GST models */}
+          {trainingDone && gstFeatures && (
+            <div className="border-t border-slate-200 pt-4 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-[10px] font-black text-emerald-700 bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded uppercase">Real Data</span>
+                <span className="text-[10px] font-mono text-slate-500">
+                  Aggregates over {trainingTxCount?.toLocaleString?.('en-IN') ?? trainingTxCount} real GST profiles
+                </span>
+              </div>
+              <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+                {(() => {
+                  const inr = (n) => n == null ? '—' : `₹${Math.round(n).toLocaleString('en-IN')}`;
+                  const pct = (n, d = 1) => n == null ? '—' : `${n.toFixed(d)}%`;
+                  return [
+                    { label: 'Avg Annual Turnover', value: inr(gstFeatures.avgAnnualTurnover) },
+                    { label: 'Avg Monthly Turnover', value: inr(gstFeatures.avgMonthlyTurnover) },
+                    { label: 'Filing Regularity', value: pct(gstFeatures.filingRegularityPct) },
+                    { label: 'On-time Filing', value: pct(gstFeatures.onTimeFilingPct) },
+                    { label: 'Turnover Growth YoY', value: pct(gstFeatures.turnoverGrowthYoY) },
+                    { label: 'ITC Claim Ratio', value: gstFeatures.itcClaimRatio == null ? '—' : gstFeatures.itcClaimRatio.toFixed(3) },
+                    { label: 'Top Buyer Share', value: pct(gstFeatures.topBuyerPct) },
+                    { label: 'Avg Vintage', value: gstFeatures.avgVintageYears == null ? '—' : `${gstFeatures.avgVintageYears.toFixed(1)} yrs` },
+                    { label: 'Avg UW Score', value: gstFeatures.avgUnderwritingScore == null ? '—' : gstFeatures.avgUnderwritingScore.toFixed(1) },
+                  ];
+                })().map(f => (
+                  <div key={f.label} className="bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                    <div className="text-[8px] text-slate-400 font-semibold uppercase tracking-wide">{f.label}</div>
+                    <div className="text-[11px] font-bold text-slate-800 font-mono">{f.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Real extracted features — shown after all models appear */}
           {trainingDone && realFeatures && (
@@ -1272,6 +1427,55 @@ export default function Page2Pipeline({
                   const currentVer = selectedVersionMap[model.id] || "v3.4";
                   const currentStatus = deployedStatusMap[model.id] || "Ready";
 
+                  if (model.kind === 'gst') {
+                    const gstVerOpts = (gstRegistry?.versions || []).map((v) => ({
+                      value: v.value, label: v.label,
+                    }));
+                    const gstVer = gstRegistry?.active ? `v${gstRegistry.active}` : `v${model.version}`;
+                    const deployed = gstRegistry?.deployed?.[model.id] ?? true;
+                    return (
+                      <tr key={model.id} className="bg-purple-50/40 text-slate-800">
+                        <td className="py-2 px-3">
+                          {gstVerOpts.length > 0 ? (
+                            <div className="max-w-36">
+                              <Select
+                                value={gstVer}
+                                onChange={handleGstVersionChange}
+                                options={gstVerOpts}
+                                buttonClassName="w-full flex items-center justify-between gap-1.5 bg-white border border-purple-200 rounded-lg px-2.5 py-1 text-xs font-bold text-purple-900 cursor-pointer hover:border-purple-300"
+                              />
+                            </div>
+                          ) : (
+                            <span className="text-xs font-bold text-slate-500">{gstVer}</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-3 font-bold text-slate-800">{model.name}</td>
+                        <td className="py-2 px-3">
+                          <span className={`w-20 inline-block text-center py-0.5 rounded-md text-[10px] font-extrabold font-mono border ${
+                            deployed
+                              ? 'bg-emerald-600 text-white border-emerald-600'
+                              : 'bg-slate-50 text-slate-500 border-slate-200'
+                          }`}>
+                            {deployed ? 'DEPLOYED' : 'REVOKED'}
+                          </span>
+                        </td>
+                        <td className="py-2 px-3 text-slate-600">{model.createdDate}</td>
+                        <td className="py-2 px-3">
+                          <button
+                            onClick={() => handleGstDeploy(model.id)}
+                            className={`px-3 py-1 rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer ${
+                              deployed
+                                ? 'bg-slate-100 text-slate-800 hover:bg-slate-200'
+                                : 'btn-orange text-white shadow-orange-900/15'
+                            }`}
+                          >
+                            {deployed ? 'Revoke' : 'Deploy'}
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  }
+
                   return (
                     <tr key={model.id} className="hover:bg-slate-50/30 transition-colors text-slate-800">
                       <td className="py-2 px-3">
@@ -1386,10 +1590,43 @@ export default function Page2Pipeline({
 
             <div className="px-6 pb-4 grid grid-cols-2 gap-2">
               <StatTile label="Files parsed" value={uploadResult.ok.length} />
-              <StatTile label="Transactions" value={uploadResult.totalTx.toLocaleString('en-IN')} />
+              {uploadResult.gst ? (
+                <StatTile
+                  label={uploadResult.gst.mode === 'returns' ? 'Businesses scored' : 'GST records'}
+                  value={uploadResult.gst.mode === 'returns'
+                    ? (uploadResult.gst.businesses ?? uploadResult.gst.records)
+                    : uploadResult.gst.records}
+                />
+              ) : (
+                <StatTile label="Transactions" value={uploadResult.totalTx.toLocaleString('en-IN')} />
+              )}
             </div>
 
-            {uploadResult.ok.length > 0 && (
+            {uploadResult.gst && (
+              <div className="px-6 pb-3 flex flex-wrap gap-1.5">
+                {uploadResult.gst.mode === 'returns' && Object.entries(uploadResult.gst.returnsSeen || {})
+                  .filter(([, n]) => n > 0)
+                  .map(([t, n]) => (
+                    <span key={t} className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-purple-50 text-purple-700 border-purple-200">
+                      {t} ×{n}
+                    </span>
+                  ))}
+                {uploadResult.gst.avgUnderwritingScore != null && (
+                  <span className="text-[10px] font-bold px-2 py-0.5 rounded-full border bg-slate-50 text-slate-600 border-slate-200">
+                    avg score {uploadResult.gst.avgUnderwritingScore}
+                  </span>
+                )}
+                {Object.entries(uploadResult.gst.riskCounts || {}).map(([flag, n]) => (
+                  <span key={flag} className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${
+                    flag === 'LOW' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : flag === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                  }`}>{flag} {n}</span>
+                ))}
+              </div>
+            )}
+
+            {uploadResult.ok.length > 0 && !uploadResult.gst && (
               <div className="px-6 pb-2 max-h-44 overflow-y-auto space-y-1">
                 {uploadResult.ok.map((m, i) => (
                   <div key={i} className="flex items-center justify-between gap-2 text-[11px] rounded-lg border border-slate-200 bg-slate-50/50 px-2.5 py-1.5">
