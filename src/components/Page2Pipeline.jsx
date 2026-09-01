@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X, Ban, PencilLine } from 'lucide-react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X, Ban, PencilLine, BadgeCheck } from 'lucide-react';
 import { api } from '../api/client';
 import Select from './Select';
 
@@ -115,11 +115,20 @@ export default function Page2Pipeline({
   };
   useEffect(() => { loadEvaluation(evalModelId); }, [evalModelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // On a GST-only pipeline there are no bank session models — focus the first
+  // GST head so the detail panel isn't stuck on an untrained "risk_model".
+  useEffect(() => {
+    if (!evalSummary) return;
+    const ids = [...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || [])].map((m) => m.modelId);
+    if (ids.length && !ids.includes(evalModelId)) setEvalModelId(ids[0]);
+  }, [evalSummary]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const reEvaluate = async () => {
     setReEvaluating(true);
     try {
       const d = await api.post(`/models/evaluation/${evalModelId}/re-run`);
       setModelEval(d.evaluation || null);
+      loadEvalSummary();
     } catch (err) {
       alert(err.message);
     } finally {
@@ -1275,7 +1284,7 @@ export default function Page2Pipeline({
       {/* 9b. Model Evaluation — real cross-validation accuracy (compact).
           Only appears as a step AFTER session training has run — not on every
           load. The Population (dataset) model alone is not enough to show it. */}
-      {trainingDone && evalSummary?.sessionModels?.length > 0 && (
+      {trainingDone && (evalSummary?.sessionModels?.length > 0 || evalSummary?.gstModels?.length > 0) && (
         <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
@@ -1283,9 +1292,11 @@ export default function Page2Pipeline({
               <span className="text-[9px] font-mono text-slate-400 font-normal">real cross-validation</span>
             </h2>
             <div className="flex items-center gap-2">
-              {evalSummary.sessionTrainedAt && (
+              {(evalSummary.sessionTrainedAt || evalSummary.gstTrainedAt) && (
                 <span className="text-[9px] font-mono text-slate-400 hidden sm:inline">
-                  {evalSummary.sessionAlgorithm} · {new Date(evalSummary.sessionTrainedAt).toLocaleString()}
+                  {evalSummary.sessionAlgorithm || evalSummary.gstAlgorithm}
+                  {' · '}
+                  {new Date(evalSummary.sessionTrainedAt || evalSummary.gstTrainedAt).toLocaleString()}
                 </span>
               )}
               <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
@@ -1339,6 +1350,31 @@ export default function Page2Pipeline({
                     <td className="py-1.5 px-3"></td>
                   </tr>
                 )}
+                {evalSummary.gstModels?.length > 0 && (
+                  <tr className="bg-purple-50/40">
+                    <td colSpan={6} className="py-1 px-3 text-[8px] font-black uppercase tracking-wider text-purple-700">
+                      GST Underwriting{evalSummary.gstAlgorithm ? ` · ${evalSummary.gstAlgorithm}` : ''} · 3-fold CV
+                    </td>
+                  </tr>
+                )}
+                {evalSummary.gstModels?.map((m) => {
+                  const sel = m.modelId === evalModelId;
+                  return (
+                    <tr key={m.modelId}
+                      onClick={() => setEvalModelId(m.modelId)}
+                      className={`cursor-pointer ${sel ? 'bg-slate-50/70' : 'hover:bg-purple-50/20'}`}>
+                      <td className="py-1.5 px-3 font-bold text-slate-800">
+                        {sel && <span className="text-purple-500">▸ </span>}{m.name}
+                        <span className="ml-1.5 text-[8px] font-black text-purple-700 bg-purple-100 border border-purple-200 rounded px-1">GST</span>
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.precision)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.recall)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.f1)}</td>
+                      <td className="py-1.5 px-3 text-right text-purple-400 text-[9px]">{sel ? 'shown below' : 'view'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1348,7 +1384,8 @@ export default function Page2Pipeline({
           <div className="space-y-2 border border-slate-200 rounded-lg bg-slate-50/20 p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-mono font-bold text-purple-600 uppercase">
-                {evalSummary.sessionModels?.find((x) => x.modelId === evalModelId)?.name} — detail
+                {[...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || [])]
+                  .find((x) => x.modelId === evalModelId)?.name} — detail
               </span>
               {modelEval.evalMetrics.metricMeta?.cvTitle && (
                 <span className="text-[9px] font-mono text-emerald-700">{modelEval.evalMetrics.metricMeta.cvTitle}</span>
@@ -1409,7 +1446,9 @@ export default function Page2Pipeline({
           )}
 
           <p className="text-[9px] text-slate-400 font-mono">
-            Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). Click a model row to see its per-fold detail below.
+            {evalSummary.sessionModels?.length > 0 && 'Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). '}
+            {evalSummary.gstModels?.length > 0 && 'GST heads: real 3-fold CV on the GST underwriting corpus. '}
+            Click a model row to see its per-fold detail below.
           </p>
         </div>
       )}
@@ -1552,7 +1591,7 @@ export default function Page2Pipeline({
           )}
 
           {[
-            { v: 'published', label: 'Published', cls: 'btn-purple shadow-purple-950/25', Icon: Check },
+            { v: 'published', label: 'Published', cls: 'btn-purple shadow-purple-950/25', Icon: BadgeCheck },
             { v: 'unpublished', label: 'Unpublished', cls: 'btn-red shadow-rose-950/25', Icon: Ban },
             { v: 'draft', label: 'Draft', cls: 'btn-orange shadow-orange-900/20', Icon: PencilLine },
           ].map(({ v, label, cls, Icon }) => (

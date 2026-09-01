@@ -7,13 +7,16 @@ import {
   FlaskConical,
   SlidersHorizontal,
   ChevronDown,
+  ListChecks,
+  Sparkles,
+  ShieldCheck,
 } from 'lucide-react';
 import Logo from './Logo';
 
 const SETTINGS_CHILDREN = [
-  { id: 'settings/bre', name: 'BRE Rule Setting' },
-  { id: 'settings/ai', name: 'AI Setting' },
-  { id: 'settings/security', name: 'ML Security' },
+  { id: 'settings/bre', name: 'BRE Signals', icon: ListChecks },
+  { id: 'settings/ai', name: 'AI Setting', icon: Sparkles },
+  { id: 'settings/security', name: 'ML Security', icon: ShieldCheck },
 ];
 
 export default function SidebarNavbar({ activeView, setActiveView, onReset, user, onLogout, selectedSourcesCount = 0 }) {
@@ -97,21 +100,28 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
           </button>
 
           {inSettings && (
-            <div className="pl-5 space-y-1">
+            <div className="space-y-1.5">
               {SETTINGS_CHILDREN.map((c) => {
                 const on = activeView === c.id;
+                const ChildIcon = c.icon;
                 return (
                   <button
                     key={c.id}
                     type="button"
                     onClick={() => setActiveView(c.id)}
-                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all cursor-pointer ${
+                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all ${
                       on
-                        ? 'bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold'
-                        : 'text-slate-500 hover:text-slate-800 hover:bg-white/60 font-semibold'
+                        ? '-mr-4 bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold cursor-pointer'
+                        : 'text-slate-600 hover:bg-white/60 font-semibold cursor-pointer'
                     }`}
                   >
-                    <span className={`w-2 h-2 rounded-full shrink-0 ${on ? 'bg-white' : 'bg-slate-300'}`} />
+                    <span
+                      className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
+                        on ? 'bg-white/15 text-white' : 'bg-white text-[#3b0764] shadow-xs'
+                      }`}
+                    >
+                      <ChildIcon className="w-4.5 h-4.5" strokeWidth={2.2} />
+                    </span>
                     <span className="text-sm truncate">{c.name}</span>
                   </button>
                 );

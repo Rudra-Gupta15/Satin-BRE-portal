@@ -586,13 +586,11 @@ export default function Page3Inference({
     ...modelsList.filter(m => m.kind !== 'gst' && deployedStatusMap[m.id] === "Deployed"),
     ...gstDeployedModels,
   ];
-  // The model list is scoped to the selected input data source: a bank-statement
-  // source shows ALL bank models (Risk / Cashflow / Fraud / Money Balance),
-  // the GST source shows the deployed GST heads.
+  // The model list is scoped to the selected input data source AND to what is
+  // currently deployed. All four bank models ship deployed, so a fresh session
+  // shows all four; Revoking one in the Model Hub registry drops it from here.
   const modelsForSource = (srcId) =>
-    srcId === 'gst_data'
-      ? deployedModels.filter(m => m.kind === 'gst')
-      : modelsList.filter(m => m.kind !== 'gst');
+    deployedModels.filter(m => (srcId === 'gst_data' ? m.kind === 'gst' : m.kind !== 'gst'));
   // Multi-select: which deployed models are in scope (default = all of them).
   const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
   // Which one's results are currently shown.

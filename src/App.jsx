@@ -54,11 +54,14 @@ export default function App() {
     money_balance_model: "v3.4"
   });
 
+  // Every model starts deployed. Revoking one (Model Hub registry table) drops
+  // it from the live set and from Model Testing's "Select Models"; a browser
+  // reload restores all four.
   const [deployedStatusMap, setDeployedStatusMap] = useState({
     risk_model: "Deployed",
     cashflow_model: "Deployed",
-    fraud_model: "Ready",
-    money_balance_model: "Ready"
+    fraud_model: "Deployed",
+    money_balance_model: "Deployed"
   });
 
   const handleReset = () => {
@@ -74,8 +77,8 @@ export default function App() {
     setDeployedStatusMap({
       risk_model: "Deployed",
       cashflow_model: "Deployed",
-      fraud_model: "Ready",
-      money_balance_model: "Ready"
+      fraud_model: "Deployed",
+      money_balance_model: "Deployed"
     });
     // Clears the working session (uploads, pipeline, models) but keeps which
     // data sources are published — rehydrate that set.

@@ -137,7 +137,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
                   }}
                   className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-white bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] shadow-sm shadow-purple-950/20 hover:brightness-110 transition-all cursor-pointer inline-flex items-center gap-1"
                 >
-                  <span>Data Source Rule</span>
+                  <span>Data Source Signals</span>
                 </button>
 
                 <div className="flex items-center gap-2">
