@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X, Ban, PencilLine, BadgeCheck } from 'lucide-react';
+import { Check, ArrowRight, Play, Loader2, ChevronDown, ChevronLeft, ChevronRight, BarChart3, RefreshCw, FolderUp, UploadCloud, X, Ban, PencilLine, BadgeCheck, ScanSearch } from 'lucide-react';
 import { api } from '../api/client';
 import Select from './Select';
 
@@ -74,6 +74,7 @@ export default function Page2Pipeline({
   const [stageLog, setStageLog] = useState([]); // [{ id, name, durationMs, detail }] — real per-stage results from the backend
   const [selectedFeatures, setSelectedFeatures] = useState([]);
   const [featuresAsJson, setFeaturesAsJson] = useState(true);   // Stage 5 selected-features view
+  const [featuresExpanded, setFeaturesExpanded] = useState(false); // collapse the long list by default
   const [normalizeTable, setNormalizeTable] = useState([]);   // Stage 3: raw / MinMax / Z-score per feature
   const [engineeredTable, setEngineeredTable] = useState([]); // Stage 4: derived temporal-ratio features
   const [selectionTable, setSelectionTable] = useState([]);   // Stage 5: variance ranking + selected flag
@@ -109,17 +110,32 @@ export default function Page2Pipeline({
   const loadEvalSummary = () => {
     api.get('/models/evaluation/summary').then(setEvalSummary).catch(() => {});
   };
+
+  // Anomaly & fraud patterns found in the training data, computed after training.
+  const [patterns, setPatterns] = useState(null);
+  const loadPatterns = () => {
+    const gst = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m.kind === 'gst');
+    api.get(gst ? '/gst/patterns' : '/models/patterns')
+      .then((d) => setPatterns(d?.available ? d : null))
+      .catch(() => setPatterns(null));
+  };
   const loadEvaluation = (mid) => {
     api.get('/models/evaluation', { model_id: mid }).then((d) => setModelEval(d.evaluation || null)).catch(() => {});
     loadEvalSummary();
   };
   useEffect(() => { loadEvaluation(evalModelId); }, [evalModelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // On a GST-only pipeline there are no bank session models — focus the first
-  // GST head so the detail panel isn't stuck on an untrained "risk_model".
+  // This session trained the GST model, not the bank models — the eval panel
+  // (and everything else) should then show ONLY the GST heads.
+  const isGstRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'gst');
+  const evalModelsForRun = isGstRun
+    ? (evalSummary?.gstModels || [])
+    : (evalSummary?.sessionModels || []);
+
+  // Focus the first model of whichever family this session trained.
   useEffect(() => {
     if (!evalSummary) return;
-    const ids = [...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || [])].map((m) => m.modelId);
+    const ids = evalModelsForRun.map((m) => m.modelId);
     if (ids.length && !ids.includes(evalModelId)) setEvalModelId(ids[0]);
   }, [evalSummary]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -159,6 +175,7 @@ export default function Page2Pipeline({
       if (trainedModels.some((m) => m.kind === 'gst')) {
         api.get('/gst/model/registry').then(setGstRegistry).catch(() => {});
       }
+      loadPatterns();
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -405,6 +422,7 @@ export default function Page2Pipeline({
         setTrainingDone(true);
         setTrainedModels(data.models);
         loadEvaluation(evalModelId);
+        loadPatterns();
       }
     }, 600);
   };
@@ -814,20 +832,34 @@ export default function Page2Pipeline({
                   >
                     {featuresAsJson ? 'view as chips' : 'view as JSON'}
                   </button>
+                  {selectedFeatures.length > 12 && (
+                    <button
+                      type="button"
+                      onClick={() => setFeaturesExpanded((v) => !v)}
+                      className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:border-slate-300 cursor-pointer"
+                    >
+                      {featuresExpanded ? 'collapse' : 'expand'}
+                    </button>
+                  )}
                 </div>
-                {featuresAsJson ? (
-                  <pre className="text-[9px] font-mono text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 overflow-x-auto leading-relaxed">
+                <div className="relative">
+                  {featuresAsJson ? (
+                    <pre className={`text-[9px] font-mono text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 overflow-auto leading-relaxed ${featuresExpanded ? 'max-h-none' : 'max-h-40'}`}>
 {JSON.stringify(selectedFeatures, null, 2)}
-                  </pre>
-                ) : (
-                  <div className="flex items-center flex-wrap gap-1.5">
-                    {selectedFeatures.map((f) => (
-                      <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-800">
-                        {f}
-                      </span>
-                    ))}
-                  </div>
-                )}
+                    </pre>
+                  ) : (
+                    <div className={`flex items-center flex-wrap gap-1.5 overflow-y-auto ${featuresExpanded ? 'max-h-none' : 'max-h-40'}`}>
+                      {selectedFeatures.map((f) => (
+                        <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-800">
+                          {f}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  {!featuresExpanded && selectedFeatures.length > 12 && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 h-8 bg-linear-to-t from-white to-transparent rounded-b-lg" />
+                  )}
+                </div>
               </div>
             )}
           </div>
@@ -1284,19 +1316,21 @@ export default function Page2Pipeline({
       {/* 9b. Model Evaluation — real cross-validation accuracy (compact).
           Only appears as a step AFTER session training has run — not on every
           load. The Population (dataset) model alone is not enough to show it. */}
-      {trainingDone && (evalSummary?.sessionModels?.length > 0 || evalSummary?.gstModels?.length > 0) && (
+      {trainingDone && evalModelsForRun.length > 0 && (
         <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-700" /> Model Evaluation
-              <span className="text-[9px] font-mono text-slate-400 font-normal">real cross-validation</span>
+              <span className="text-[9px] font-mono text-slate-400 font-normal">
+                {isGstRun ? 'GST · real 3-fold CV' : 'real 5-fold cross-validation'}
+              </span>
             </h2>
             <div className="flex items-center gap-2">
-              {(evalSummary.sessionTrainedAt || evalSummary.gstTrainedAt) && (
+              {(isGstRun ? evalSummary.gstTrainedAt : evalSummary.sessionTrainedAt) && (
                 <span className="text-[9px] font-mono text-slate-400 hidden sm:inline">
-                  {evalSummary.sessionAlgorithm || evalSummary.gstAlgorithm}
+                  {isGstRun ? evalSummary.gstAlgorithm : evalSummary.sessionAlgorithm}
                   {' · '}
-                  {new Date(evalSummary.sessionTrainedAt || evalSummary.gstTrainedAt).toLocaleString()}
+                  {new Date(isGstRun ? evalSummary.gstTrainedAt : evalSummary.sessionTrainedAt).toLocaleString()}
                 </span>
               )}
               <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
@@ -1320,7 +1354,7 @@ export default function Page2Pipeline({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-50">
-                {evalSummary.sessionModels?.map((m) => {
+                {!isGstRun && evalSummary.sessionModels?.filter((m) => m.kind !== 'pattern').map((m) => {
                   const sel = m.modelId === evalModelId;
                   return (
                     <tr key={m.modelId}
@@ -1337,7 +1371,7 @@ export default function Page2Pipeline({
                     </tr>
                   );
                 })}
-                {evalSummary.datasetModel && (
+                {!isGstRun && evalSummary.datasetModel && (
                   <tr className="bg-emerald-50/50">
                     <td className="py-1.5 px-3 font-bold text-slate-800">
                       Population Model <span className="text-[8px] bg-emerald-600 text-white px-1 py-0.5 rounded">v{evalSummary.datasetModel.version}</span>
@@ -1350,14 +1384,7 @@ export default function Page2Pipeline({
                     <td className="py-1.5 px-3"></td>
                   </tr>
                 )}
-                {evalSummary.gstModels?.length > 0 && (
-                  <tr className="bg-purple-50/40">
-                    <td colSpan={6} className="py-1 px-3 text-[8px] font-black uppercase tracking-wider text-purple-700">
-                      GST Underwriting{evalSummary.gstAlgorithm ? ` · ${evalSummary.gstAlgorithm}` : ''} · 3-fold CV
-                    </td>
-                  </tr>
-                )}
-                {evalSummary.gstModels?.map((m) => {
+                {isGstRun && evalSummary.gstModels?.filter((m) => m.kind !== 'pattern').map((m) => {
                   const sel = m.modelId === evalModelId;
                   return (
                     <tr key={m.modelId}
@@ -1446,12 +1473,97 @@ export default function Page2Pipeline({
           )}
 
           <p className="text-[9px] text-slate-400 font-mono">
-            {evalSummary.sessionModels?.length > 0 && 'Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). '}
-            {evalSummary.gstModels?.length > 0 && 'GST heads: real 3-fold CV on the GST underwriting corpus. '}
+            {isGstRun
+              ? 'GST heads: real 3-fold CV on the GST underwriting corpus. '
+              : 'Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). '}
             Click a model row to see its per-fold detail below.
           </p>
         </div>
       )}
+
+      {/* 9c. Fraud & Anomaly Pattern models — cross-validated accuracy. */}
+      {trainingDone && (() => {
+        const models = evalModelsForRun.filter((m) => m.kind === 'pattern');
+        const fr = patterns?.fraud || { files: 0, typologies: [] };
+        if (models.length === 0 && !(fr.typologies?.length)) return null;
+        const N = fr.files || 0;
+        const unit = isGstRun ? 'businesses' : 'statements';
+        return (
+        <div className="border border-slate-200 rounded-2xl p-4 bg-white space-y-3 shadow-sm animate-fadeIn">
+          <div>
+            <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
+              <ScanSearch className="w-4 h-4 text-purple-700" /> Fraud &amp; Anomaly Detection
+              {models.length > 0 && (
+                <span className="text-[9px] font-mono text-slate-400 font-normal">real 5-fold cross-validation</span>
+              )}
+            </h2>
+            <p className="text-[11px] text-slate-500 mt-0.5">
+              {models.length > 0
+                ? `Two classifiers trained ${N ? `on your ${N.toLocaleString()} ${unit}` : ''} to flag suspicious patterns. Model Testing scores each applicant against them.`
+                : `Known fraud signatures scanned ${N ? `across your ${N.toLocaleString()} ${unit}` : 'across the training data'}. Model Testing checks each applicant against them.`}
+            </p>
+          </div>
+
+          {models.length > 0 && (
+          <div className="overflow-x-auto border border-slate-200 rounded-lg">
+            <table className="w-full text-left text-[11px] font-mono">
+              <thead className="bg-slate-50/70 text-slate-800 text-[9px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-1.5 px-3">Model</th>
+                  <th className="py-1.5 px-3 text-right">Accuracy</th>
+                  <th className="py-1.5 px-3 text-right">Precision</th>
+                  <th className="py-1.5 px-3 text-right">Recall</th>
+                  <th className="py-1.5 px-3 text-right">F1</th>
+                  <th className="py-1.5 px-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-50">
+                {models.map((m) => {
+                  const sel = m.modelId === evalModelId;
+                  return (
+                    <tr key={m.modelId} onClick={() => setEvalModelId(m.modelId)}
+                      className={`cursor-pointer ${sel ? 'bg-slate-50/70' : 'hover:bg-slate-50/30'}`}>
+                      <td className="py-1.5 px-3 font-bold text-slate-800">
+                        {sel && <span className="text-purple-500">▸ </span>}{m.name}
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.precision)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.recall)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.f1)}</td>
+                      <td className="py-1.5 px-3 text-right text-purple-400 text-[9px]">{sel ? 'detail above' : 'view'}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          )}
+
+          {fr.typologies?.length > 0 && (
+            <details className="text-[11px]" open={models.length === 0}>
+              <summary className="cursor-pointer text-slate-500 font-semibold hover:text-purple-800 select-none">
+                {models.length > 0
+                  ? `Fraud signatures these models learn (${fr.typologies.length}) · found in training`
+                  : `Fraud signatures scanned (${fr.typologies.length}) · found in training`}
+              </summary>
+              <div className="space-y-1 mt-2">
+                {fr.typologies.map((t) => {
+                  const hit = t.matched + t.elevated;
+                  return (
+                    <div key={t.name} className="flex items-baseline justify-between gap-2 py-1 border-b border-slate-100 last:border-0">
+                      <span><span className="font-bold text-slate-700">{t.name}</span> <span className="text-slate-400">— {t.desc}</span></span>
+                      <span className={`shrink-0 font-bold ${hit > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+                        {hit === 0 ? `clear / ${N}` : `${hit} / ${N}`}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </details>
+          )}
+        </div>
+        );
+      })()}
 
       {/* 10. Model Version & Deployment Management Table */}
       {readyModelsList.length > 0 && (visibleModelsCount === readyModelsList.length || trainingDone) && (

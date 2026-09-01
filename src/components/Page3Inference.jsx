@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload, RefreshCw, Code, Table,
-  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy
+  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy, Fingerprint, ShieldAlert
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
@@ -29,6 +29,9 @@ const GRADE_BADGE_STYLE = {
   MEDIUM: 'bg-amber-100 text-amber-900 border-amber-200',
   HIGH: 'bg-rose-100 text-rose-800 border-rose-200'
 };
+
+// tab labels: "Risk Model" -> "Risk", "Money Balance Model" -> "Money Balance"
+const shortModelName = (name) => (name || '').replace(/\s*Model$/i, '').trim() || name;
 
 const inr = (n) => (n == null ? '—' : `₹${Math.round(n).toLocaleString('en-IN')}`);
 const inrShort = (n) => {
@@ -111,7 +114,8 @@ const GST_SUB_TABS = [
   { id: 'output', label: 'Model Output' },
   { id: 'metrics', label: 'GST Metrics' },
   { id: 'factors', label: 'Top Factors' },
-  { id: 'rules', label: 'Rule Result' },
+  { id: 'pattern_match', label: 'Fraud Check' },
+  { id: 'rules', label: 'Signal Result' },
   { id: 'bre', label: 'BRE payload' },
 ];
 const GST_DECISION_STYLE = {
@@ -172,7 +176,7 @@ function PaginatedRuleList({ results }) {
 function GstTestResults({
   bundle, isLoading, activeModelId, modelName, version, fileName, customId, onReprocess,
   headModels = [], onSelectModel, tab = 'output', onSelectTab, bre, breLoading,
-  copiedPayload, onCopyPayload,
+  patternMatch, patternLoading, copiedPayload, onCopyPayload,
 }) {
   if (isLoading && !bundle) {
     return (
@@ -241,7 +245,7 @@ function GstTestResults({
                 isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
               }`}
             >
-              {m.name} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {shortModelName(m.name)} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
               {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
             </button>
           );
@@ -325,6 +329,10 @@ function GstTestResults({
             </div>
           )}
         </div>
+      )}
+
+      {tab === 'pattern_match' && (
+        <PatternMatchView data={patternMatch} loading={patternLoading} />
       )}
 
       {/* ─────────── BRE PAYLOAD TAB (raw JSON) ─────────── */}
@@ -558,6 +566,222 @@ function GstTestResults({
   );
 }
 
+// ── Pattern Match — written for a non-technical reviewer ────────────────────
+// Everything here is a plain sentence + one clear icon. No jargon, no bare
+// numbers, no dot strips. The verdict is a traffic light; the two questions are
+// the ones a credit officer actually asks; the rest is folded away.
+
+// compact number for the "compares to normal" bars: 2.0541 -> "2.05", 1234 -> "1,234"
+const fmtCompare = (n) => {
+  const x = Number(n);
+  if (!Number.isFinite(x)) return String(n);
+  return Math.abs(x) >= 100 ? Math.round(x).toLocaleString('en-IN') : x.toFixed(2);
+};
+
+const ZONE_UI = {
+  good: {
+    card: 'border-emerald-300 bg-emerald-50', accent: 'text-emerald-800', Icon: CheckCircle,
+    title: 'Looks fine to proceed',
+    sub: 'Nothing in this statement points to fraud or an unusual account.',
+  },
+  review: {
+    card: 'border-amber-300 bg-amber-50', accent: 'text-amber-900', Icon: AlertTriangle,
+    title: 'Worth a closer look before you decide',
+    sub: 'A few things stand out. Skim the statement yourself before approving.',
+  },
+  concern: {
+    card: 'border-rose-300 bg-rose-50', accent: 'text-rose-800', Icon: ShieldAlert,
+    title: 'Send this for a fraud review',
+    sub: 'This account matches a known fraud pattern. Don’t approve it without a manual check.',
+  },
+};
+
+const FRAUD_ANSWER = {
+  clear:  { word: 'No',    tone: 'text-emerald-700', Icon: CheckCircle,   line: 'The numbers look genuine — no sign of money being shuffled around to look better than it is.' },
+  review: { word: 'Maybe', tone: 'text-amber-800',   Icon: AlertTriangle, line: 'One or two things look a little off. A person should read the statement before deciding.' },
+  alert:  { word: 'Yes',   tone: 'text-rose-700',    Icon: ShieldAlert,   line: 'This matches a known trick people use to make an account look healthier than it really is.' },
+};
+
+const ACTIVITY_ANSWER = {
+  clear:  { word: 'Yes',    tone: 'text-emerald-700', Icon: CheckCircle,   line: 'Money comes in and goes out steadily, the way a normal account does.' },
+  review: { word: 'Mostly', tone: 'text-amber-800',   Icon: AlertTriangle, line: 'Some months look different from the rest — not alarming, but worth a glance.' },
+  alert:  { word: 'No',     tone: 'text-rose-700',    Icon: ShieldAlert,   line: 'The account behaves quite differently from a normal bank statement.' },
+};
+
+function AnswerCard({ question, answer }) {
+  const A = answer;
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white p-5">
+      <div className="text-[13px] font-semibold text-slate-500">{question}</div>
+      <div className={`mt-2 flex items-center gap-2 ${A.tone}`}>
+        <A.Icon className="w-6 h-6 shrink-0" strokeWidth={2.2} />
+        <span className="text-2xl font-extrabold leading-none">{A.word}</span>
+      </div>
+      <p className="mt-2 text-sm text-slate-700 leading-relaxed">{A.line}</p>
+    </div>
+  );
+}
+
+function PatternMatchView({ data, loading }) {
+  if (loading && !data) {
+    return (
+      <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /><span>Checking for fraud &amp; unusual activity…</span>
+      </div>
+    );
+  }
+  if (!data) return null;
+  if (!data.available) {
+    return (
+      <div className="border border-slate-200 rounded-2xl p-8 bg-white text-center text-sm text-slate-500 shadow-sm">
+        {data.message || 'No pattern match available.'}
+      </div>
+    );
+  }
+  const boxes = data.boxes || {};
+  const fraudStatus = boxes.fraud?.status || 'clear';
+  const actStatus = boxes.anomaly?.status || 'clear';
+  const zone = ZONE_UI[data.zone] || ZONE_UI.good;
+
+  const typ = data.typologies || [];
+  const flagged = typ.filter((t) => t.verdict !== 'none');
+  const metrics = (data.comparison || {}).perMetric || [];
+  const outside = metrics.filter((r) => r.band !== 'within');
+
+  return (
+    <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm animate-fadeIn">
+      <h2 className="text-base font-bold text-slate-800 flex items-center gap-2 border-b border-slate-200 pb-3">
+        <Fingerprint className="w-4 h-4 text-purple-700" /> Fraud Check
+      </h2>
+
+      {/* 1 — the bottom line, in one sentence */}
+      <div className={`rounded-2xl border-2 p-5 ${zone.card}`}>
+        <div className={`flex items-center gap-2.5 ${zone.accent}`}>
+          <zone.Icon className="w-7 h-7 shrink-0" strokeWidth={2.2} />
+          <span className="text-xl font-extrabold leading-tight">{zone.title}</span>
+        </div>
+        <p className="mt-2 text-[13px] text-slate-700 leading-relaxed">{zone.sub}</p>
+      </div>
+
+      {/* 2 — the two questions a reviewer actually asks */}
+      <div className="grid md:grid-cols-2 gap-3">
+        <AnswerCard question="Is anyone faking the numbers?" answer={FRAUD_ANSWER[fraudStatus] || FRAUD_ANSWER.clear} />
+        <AnswerCard question="Does this account behave normally?" answer={ACTIVITY_ANSWER[actStatus] || ACTIVITY_ANSWER.clear} />
+      </div>
+
+      {/* 3 — what we actually found, in plain words */}
+      <div className="rounded-2xl border border-slate-200 bg-slate-50/60 p-5">
+        <div className="text-[13px] font-bold text-slate-700 mb-3">What we found</div>
+        {flagged.length === 0 ? (
+          <div className="flex items-center gap-2 text-sm text-emerald-700 font-semibold">
+            <CheckCircle className="w-5 h-5 shrink-0" strokeWidth={2.2} />
+            All {typ.length} fraud checks passed — nothing was flagged.
+          </div>
+        ) : (
+          <ul className="space-y-2">
+            {flagged.map((t) => (
+              <li key={t.name} className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-3">
+                <div className="flex items-start gap-2.5">
+                  <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 mt-0.5" strokeWidth={2.2} />
+                  <div className="text-[13px] text-slate-800 leading-relaxed">
+                    <div className="font-bold">{t.name}</div>
+                    <div>{t.desc}.</div>
+                    <div className="mt-0.5 text-slate-500">In this statement: {t.evidence}.</div>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {outside.length > 0 && (
+          <p className="mt-3 text-[12px] text-slate-500 leading-relaxed">
+            We also compare {metrics.length} numbers from this account against ordinary statements.
+            {' '}{outside.length === 1 ? 'One of them looks' : `${outside.length} of them look`} higher
+            than usual — see “See every check” below.
+          </p>
+        )}
+      </div>
+
+      {/* 4 — the full breakdown, folded away for whoever wants it */}
+      <details className="text-[12px]">
+        <summary className="cursor-pointer text-slate-500 font-semibold hover:text-purple-800 select-none">
+          See every check
+        </summary>
+        <div className="mt-3 space-y-5">
+
+          {/* all checks, pass or fail, spelled out */}
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-2">
+              Every check we ran
+            </div>
+            <ul className="space-y-1.5">
+              {typ.map((t) => {
+                const ok = t.verdict === 'none';
+                return (
+                  <li key={t.name} className="flex items-start gap-2">
+                    {ok
+                      ? <Check className="w-4 h-4 shrink-0 text-emerald-500 mt-0.5" strokeWidth={2.5} />
+                      : <AlertTriangle className="w-4 h-4 shrink-0 text-amber-500 mt-0.5" strokeWidth={2.5} />}
+                    <span className="text-slate-700 leading-relaxed">
+                      <strong className="text-slate-800">{t.name}</strong> — {t.desc}.{' '}
+                      {ok
+                        ? <span className="text-emerald-600">All clear.</span>
+                        : <span className="text-amber-700">Found: {t.evidence}.</span>}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+
+          {/* comparison to normal statements — two labelled bars per measure */}
+          <div>
+            <div className="text-[11px] font-black uppercase tracking-wider text-slate-500 mb-1">
+              How this account compares to normal statements
+            </div>
+            <p className="text-[11px] text-slate-500 mb-2">
+              Grey bar = a typical statement. Coloured bar = this account.
+            </p>
+            {outside.length === 0 ? (
+              <p className="text-slate-600">Every number we track is within the normal range.</p>
+            ) : (
+              <div className="space-y-3">
+                {outside.map((r) => {
+                  const a = Math.abs(r.value), b = Math.abs(r.baseline);
+                  const max = Math.max(a, b, 0.001) * 1.15;
+                  const barCol = r.band === 'extreme' ? 'bg-rose-400' : 'bg-amber-400';
+                  return (
+                    <div key={r.metric} className="rounded-xl border border-slate-200 bg-white p-3">
+                      <div className="text-[12px] font-bold text-slate-700 mb-2">{r.label}</div>
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="w-24 shrink-0 text-[10px] text-slate-500">This account</span>
+                          <span className="relative h-3.5 flex-1 rounded bg-slate-100">
+                            <span className={`absolute inset-y-0 left-0 rounded ${barCol}`} style={{ width: `${(a / max) * 100}%` }} />
+                          </span>
+                          <span className="w-12 shrink-0 text-right text-[10px] font-bold text-slate-700">{fmtCompare(r.value)}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className="w-24 shrink-0 text-[10px] text-slate-500">Normal</span>
+                          <span className="relative h-3.5 flex-1 rounded bg-slate-100">
+                            <span className="absolute inset-y-0 left-0 rounded bg-slate-300" style={{ width: `${(b / max) * 100}%` }} />
+                          </span>
+                          <span className="w-12 shrink-0 text-right text-[10px] text-slate-500">{fmtCompare(r.baseline)}</span>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      </details>
+    </div>
+  );
+}
+
 export default function Page3Inference({
   selectedIds = [],
   trainedModels = [],
@@ -611,6 +835,8 @@ export default function Page3Inference({
   const [recomputing, setRecomputing] = useState(false);
   const [breRun, setBreRun] = useState(null);
   const [breLoading, setBreLoading] = useState(false);
+  const [patternMatch, setPatternMatch] = useState(null);   // /inference/patterns result
+  const [patternLoading, setPatternLoading] = useState(false);
   const [uploadingInput, setUploadingInput] = useState(false);
   const [inputUploadInfo, setInputUploadInfo] = useState('');
   const [copiedPayload, setCopiedPayload] = useState(false);
@@ -730,6 +956,7 @@ export default function Page3Inference({
         const g = await api.get('/gst/score-testing');
         setGstBundle(g);
         setGstBre(null);
+        setPatternMatch(null);
         setBundle(null);
         setHasTested(true);
         setViewingHistory(null);
@@ -750,6 +977,7 @@ export default function Page3Inference({
         modelId, customId, bankName: bank, sourceId, record,
       });
       setBundle(data);
+      setPatternMatch(null);
       setHasTested(true);
       setViewingHistory(null);
 
@@ -783,6 +1011,7 @@ export default function Page3Inference({
     setGstBundle(null);
     setGstBre(null);
     setBreRun(null);
+    setPatternMatch(null);
     setInputFileName('');
     setInputUploadInfo('');
     setLoadError('');
@@ -799,6 +1028,20 @@ export default function Page3Inference({
       .catch((err) => setGstBre({ available: false, message: err.message }))
       .finally(() => setGstBreLoading(false));
   }, [gstTab, gstBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run the anomaly/fraud pattern match when its tab opens (AA + GST).
+  useEffect(() => {
+    const aaOpen = activeTab === 'pattern_match' && bundle && !patternMatch;
+    const gstOpen = gstTab === 'pattern_match' && gstBundle?.available && !patternMatch;
+    if ((!aaOpen && !gstOpen) || patternLoading) return;
+    setPatternLoading(true);
+    const req = gstOpen
+      ? api.get('/gst/pattern-match')
+      : api.post('/inference/patterns', { customId: customId || 'applicant', sourceId: selectedInputSourceId });
+    req.then(setPatternMatch)
+      .catch((err) => setPatternMatch({ available: false, message: err.message }))
+      .finally(() => setPatternLoading(false));
+  }, [activeTab, gstTab, bundle, gstBundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-run when the focused model changes — but only once a test has actually
   // been run on this page (never on first load, never while viewing history).
@@ -1147,6 +1390,8 @@ export default function Page3Inference({
           onSelectTab={setGstTab}
           bre={gstBre}
           breLoading={gstBreLoading}
+          patternMatch={patternMatch}
+          patternLoading={patternLoading}
           copiedPayload={copiedPayload}
           onCopyPayload={(payload) => {
             if (!payload) return;
@@ -1243,7 +1488,7 @@ export default function Page3Inference({
                 viewingHistory ? 'cursor-default' : 'cursor-pointer'
               } ${isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'}`}
             >
-              {m.name} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {shortModelName(m.name)} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
               {isActive && (
                 <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />
               )}
@@ -1257,7 +1502,8 @@ export default function Page3Inference({
           { id: 'transactions', label: 'Transactions' },
           { id: 'risk_score', label: 'Credit Score' },
           { id: 'anomalies', label: 'Anomalies' },
-          { id: 'rule_result', label: 'Rule Result' },
+          { id: 'pattern_match', label: 'Fraud Check' },
+          { id: 'rule_result', label: 'Signal Result' },
           { id: 'bre_payload', label: 'BRE payload' },
         ].map((tab) => {
           const isActive = activeTab === tab.id;
@@ -1662,6 +1908,11 @@ export default function Page3Inference({
           </div>
           )}
         </div>
+      )}
+
+      {/* TAB: PATTERN MATCH */}
+      {activeTab === 'pattern_match' && (
+        <PatternMatchView data={patternMatch} loading={patternLoading} />
       )}
 
       {/* TAB 6: BRE PAYLOAD */}
