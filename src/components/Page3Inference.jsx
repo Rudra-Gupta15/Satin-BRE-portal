@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload, RefreshCw, Code, Table,
-  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy, Fingerprint, ShieldAlert
+  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy, Fingerprint, ShieldAlert, ChevronDown
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
@@ -114,7 +114,7 @@ const GST_SUB_TABS = [
   { id: 'output', label: 'Model Output' },
   { id: 'metrics', label: 'GST Metrics' },
   { id: 'factors', label: 'Top Factors' },
-  { id: 'pattern_match', label: 'Fraud Check' },
+  { id: 'pattern_match', label: 'Anomaly & Fraud' },
   { id: 'rules', label: 'Signal Result' },
   { id: 'bre', label: 'BRE payload' },
 ];
@@ -129,8 +129,78 @@ const RULE_PILL = (s) => s === 'PASS'
   : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
   : 'bg-slate-100 text-slate-500 border-slate-200';
 
+// One rule row — click to expand a plain-English AI explanation of the result.
+function RuleRow({ r, product, decision }) {
+  const [open, setOpen] = useState(false);
+  const [ex, setEx] = useState(null); // { loading } | { text } | { error }
+
+  const load = () => {
+    setEx({ loading: true });
+    api.post('/inference/explain-rule', {
+      label: r.label, status: r.status, detail: r.detail || '',
+      serious: !!r.serious, product: product || '', decision: decision || '',
+    })
+      .then((d) => setEx({ text: d.explanation }))
+      .catch(() => setEx({ error: true }));
+  };
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    if (next && !ex) load();
+  };
+
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={toggle}
+        className="w-full flex items-start gap-3 px-3.5 py-2.5 text-left hover:bg-slate-50/40"
+      >
+        <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${RULE_PILL(r.status)}`}>
+          {r.status === 'SKIP' ? 'N/A' : r.status}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-xs font-bold text-slate-800">
+            {r.label}
+            {r.serious && <span className="ml-1.5 text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1">KEY</span>}
+          </div>
+          <div className="text-[11px] text-slate-600">{r.detail}</div>
+        </div>
+        <ChevronDown className={`w-4 h-4 shrink-0 mt-0.5 text-slate-400 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && (
+        <div className="px-3.5 pb-3 pl-11">
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-[11px] leading-relaxed text-slate-700">
+            <div className="flex items-start gap-2">
+              <div className="min-w-0 flex-1">
+                {ex?.loading && (
+                  <span className="flex items-center gap-1.5 text-slate-500 font-semibold">
+                    <Loader2 className="w-3 h-3 animate-spin" /> Explaining…
+                  </span>
+                )}
+                {ex?.error && <span className="text-slate-500">Couldn’t load an explanation right now.</span>}
+                {ex?.text && <p>{ex.text}</p>}
+              </div>
+              <button
+                type="button"
+                onClick={load}
+                disabled={ex?.loading}
+                title="Regenerate this explanation"
+                className="shrink-0 p-1 rounded-md text-slate-500 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${ex?.loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // Rule-evaluation list, paginated.
-function PaginatedRuleList({ results }) {
+function PaginatedRuleList({ results, product = '', decision = '' }) {
   const PER = 5;
   const [page, setPage] = useState(1);
   useEffect(() => { setPage(1); }, [results]);
@@ -141,20 +211,10 @@ function PaginatedRuleList({ results }) {
   const navBtn = 'px-2.5 py-1 rounded-md border border-slate-200 bg-white font-bold text-slate-700 hover:border-slate-300 disabled:opacity-40 disabled:cursor-not-allowed';
   return (
     <div className="space-y-2">
+      <p className="text-[10px] text-slate-400">Click any rule to see a plain-English explanation.</p>
       <div className="border border-slate-200 rounded-xl divide-y divide-purple-100 overflow-hidden">
         {slice.map((r, i) => (
-          <div key={r.id + i} className="flex items-start gap-3 px-3.5 py-2.5 hover:bg-slate-50/30">
-            <span className={`shrink-0 mt-0.5 px-2 py-0.5 rounded-md border text-[9px] font-extrabold font-mono ${RULE_PILL(r.status)}`}>
-              {r.status === 'SKIP' ? 'N/A' : r.status}
-            </span>
-            <div className="min-w-0">
-              <div className="text-xs font-bold text-slate-800">
-                {r.label}
-                {r.serious && <span className="ml-1.5 text-[8px] font-black text-rose-600 bg-rose-50 border border-rose-200 rounded px-1">KEY</span>}
-              </div>
-              <div className="text-[11px] text-slate-600">{r.detail}</div>
-            </div>
-          </div>
+          <RuleRow key={r.id + i} r={r} product={product} decision={decision} />
         ))}
       </div>
       {results.length > PER && (
@@ -291,9 +351,9 @@ function GstTestResults({
                   <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
                     GST BRE Rule Evaluation
                   </span>
-                  <h2 className="text-lg font-bold text-slate-800">Underwriting Decision</h2>
+                  <h2 className="text-lg font-bold text-slate-800">Signals Decision</h2>
                   <p className="text-[11px] text-slate-500 font-mono mt-0.5">
-                    GST underwriting score {bre.evaluation.creditScore} · gate ≥ {bre.evaluation.gateThreshold}
+                    GST score {bre.evaluation.creditScore} · gate ≥ {bre.evaluation.gateThreshold}
                     {bre.businessCount > 1 && ` · business #1 of ${bre.businessCount}`}
                   </p>
                 </div>
@@ -325,7 +385,7 @@ function GstTestResults({
                 </div>
               )}
 
-              <PaginatedRuleList results={bre.evaluation.results} />
+              <PaginatedRuleList results={bre.evaluation.results} product="GST-based business loan" decision={bre.evaluation.decision} />
             </div>
           )}
         </div>
@@ -778,6 +838,67 @@ function PatternMatchView({ data, loading }) {
           </div>
         </div>
       </details>
+    </div>
+  );
+}
+
+// Transaction-level anomalies table — shown under the Fraud Check view.
+function AnomaliesCard({ rows = [] }) {
+  return (
+    <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+      <div className="border-b border-slate-200 pb-3">
+        <h2 className="text-base font-bold text-slate-800">
+          Unusual transactions ({rows.length})
+        </h2>
+        <p className="text-[11px] text-slate-500">
+          Cheque/NACH returns, overdrafts, and one-off transactions far outside this account's normal range. Recurring items (salary, rent, regular payees) are excluded.
+        </p>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="py-10 flex flex-col items-center justify-center text-center gap-2">
+          <CheckCircle className="w-8 h-8 text-emerald-600" />
+          <p className="text-sm font-bold text-slate-800">Nothing unusual</p>
+          <p className="text-[11px] text-slate-500 max-w-md">
+            No returns/bounces, no negative balance, and every transaction is within this account's normal range.
+          </p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto border border-slate-200 rounded-xl">
+          <table className="w-full text-left text-xs font-mono">
+            <thead className="bg-slate-50/70 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+              <tr>
+                <th className="py-3 px-4">Date</th>
+                <th className="py-3 px-4">Narration</th>
+                <th className="py-3 px-4 text-right">Amount (₹)</th>
+                <th className="py-3 px-4">Anomaly Risk (%)</th>
+                <th className="py-3 px-4">Risk Level</th>
+                <th className="py-3 px-4">Detection Reason</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-purple-100 bg-white">
+              {rows.map((row, idx) => (
+                <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
+                  <td className="py-3 px-4 text-slate-600 font-semibold">{row.date}</td>
+                  <td className="py-3 px-4 font-bold text-slate-800">{row.narration}</td>
+                  <td className="py-3 px-4 text-right font-extrabold text-slate-900">₹{row.amount}</td>
+                  <td className="py-3 px-4 font-extrabold text-purple-900">{row.score}</td>
+                  <td className="py-3 px-4">
+                    <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold font-mono ${
+                      row.level === 'HIGH'
+                        ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                        : 'bg-amber-100 text-amber-900 border border-amber-200'
+                    }`}>
+                      {row.level}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 font-semibold text-slate-700">{row.reasons}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
@@ -1501,8 +1622,7 @@ export default function Page3Inference({
         {[
           { id: 'transactions', label: 'Transactions' },
           { id: 'risk_score', label: 'Credit Score' },
-          { id: 'anomalies', label: 'Anomalies' },
-          { id: 'pattern_match', label: 'Fraud Check' },
+          { id: 'pattern_match', label: 'Anomaly & Fraud' },
           { id: 'rule_result', label: 'Signal Result' },
           { id: 'bre_payload', label: 'BRE payload' },
         ].map((tab) => {
@@ -1849,70 +1969,12 @@ export default function Page3Inference({
         </div>
       )}
 
-      {/* TAB 4: ANOMALIES (EXPLICIT % PROBABILITY DISPLAY) */}
-      {activeTab === 'anomalies' && (
-        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
-            <div>
-              <h2 className="text-base font-bold text-slate-800">
-                Anomalies detected ({anomaliesList.length})
-              </h2>
-              <p className="text-[11px] text-slate-500">
-                Flags cheque/NACH returns, overdrafts, and one-off transactions far outside this account's normal range. Recurring items (salary, rent, regular payees) are excluded.
-              </p>
-            </div>
-          </div>
-
-          {anomaliesList.length === 0 ? (
-            <div className="py-10 flex flex-col items-center justify-center text-center gap-2">
-              <CheckCircle className="w-8 h-8 text-emerald-600" />
-              <p className="text-sm font-bold text-slate-800">No anomalies detected</p>
-              <p className="text-[11px] text-slate-500 max-w-md">
-                No returns/bounces, no negative balance, and every transaction is within this account's normal range.
-              </p>
-            </div>
-          ) : (
-          <div className="overflow-x-auto border border-slate-200 rounded-xl">
-            <table className="w-full text-left text-xs font-mono">
-              <thead className="bg-slate-50/70 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
-                <tr>
-                  <th className="py-3 px-4">Date</th>
-                  <th className="py-3 px-4">Narration</th>
-                  <th className="py-3 px-4 text-right">Amount (₹)</th>
-                  <th className="py-3 px-4">Anomaly Risk (%)</th>
-                  <th className="py-3 px-4">Risk Level</th>
-                  <th className="py-3 px-4">Detection Reason</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-purple-100 bg-white">
-                {anomaliesList.map((row, idx) => (
-                  <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
-                    <td className="py-3 px-4 text-slate-600 font-semibold">{row.date}</td>
-                    <td className="py-3 px-4 font-bold text-slate-800">{row.narration}</td>
-                    <td className="py-3 px-4 text-right font-extrabold text-slate-900">₹{row.amount}</td>
-                    <td className="py-3 px-4 font-extrabold text-purple-900">{row.score}</td>
-                    <td className="py-3 px-4">
-                      <span className={`px-2.5 py-1 rounded-md text-[10px] font-extrabold font-mono ${
-                        row.level === 'HIGH'
-                          ? 'bg-rose-100 text-rose-800 border border-rose-200'
-                          : 'bg-amber-100 text-amber-900 border border-amber-200'
-                      }`}>
-                        {row.level}
-                      </span>
-                    </td>
-                    <td className="py-3 px-4 font-semibold text-slate-700">{row.reasons}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          )}
-        </div>
-      )}
-
-      {/* TAB: PATTERN MATCH */}
+      {/* TAB: ANOMALY & FRAUD — the pattern-match verdict + the anomalies table */}
       {activeTab === 'pattern_match' && (
-        <PatternMatchView data={patternMatch} loading={patternLoading} />
+        <div className="space-y-4">
+          <PatternMatchView data={patternMatch} loading={patternLoading} />
+          <AnomaliesCard rows={anomaliesList} />
+        </div>
       )}
 
       {/* TAB 6: BRE PAYLOAD */}
@@ -1986,7 +2048,7 @@ export default function Page3Inference({
                     <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
                       BRE Rule Evaluation{breRun.productName ? ` · ${breRun.productName}` : ''}
                     </span>
-                    <h2 className="text-lg font-bold text-slate-800">Underwriting Decision</h2>
+                    <h2 className="text-lg font-bold text-slate-800">Signals Decision</h2>
                     <p className="text-[11px] text-slate-500 font-mono mt-0.5">
                       Applicant profile: {breRun.applicantProfile} · Credit score {breRun.creditScore} · Gate &gt; {breRun.gateThreshold}
                     </p>
@@ -2019,7 +2081,7 @@ export default function Page3Inference({
                   </div>
                 )}
 
-                <PaginatedRuleList results={breRun.results} />
+                <PaginatedRuleList results={breRun.results} product={breRun.productName || ''} decision={breRun.decision} />
               </div>
             );
           })()}
