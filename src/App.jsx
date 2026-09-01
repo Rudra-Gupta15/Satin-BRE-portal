@@ -63,7 +63,6 @@ export default function App() {
 
   const handleReset = () => {
     setActiveView('products');
-    setSelectedIds([]); // Reset to all unselected
     setInspectedSource(null);
     setTrainedModels([]);
     setSelectedVersionMap({
@@ -78,8 +77,12 @@ export default function App() {
       fraud_model: "Ready",
       money_balance_model: "Ready"
     });
-    api.post('/reset').catch(() => {});
-    api.put('/data-sources/selection', { selectedIds: [] }).catch(() => {});
+    // Clears the working session (uploads, pipeline, models) but keeps which
+    // data sources are published — rehydrate that set.
+    api.post('/reset')
+      .then(() => api.get('/data-sources/selection'))
+      .then((d) => setSelectedIds(d?.selectedIds || []))
+      .catch(() => setSelectedIds([]));
   };
 
   const handleLoginSuccess = (userData) => {

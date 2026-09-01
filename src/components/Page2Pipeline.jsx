@@ -73,6 +73,7 @@ export default function Page2Pipeline({
   const [storedFile, setStoredFile] = useState('processed_features_vector.csv');
   const [stageLog, setStageLog] = useState([]); // [{ id, name, durationMs, detail }] — real per-stage results from the backend
   const [selectedFeatures, setSelectedFeatures] = useState([]);
+  const [featuresAsJson, setFeaturesAsJson] = useState(true);   // Stage 5 selected-features view
   const [normalizeTable, setNormalizeTable] = useState([]);   // Stage 3: raw / MinMax / Z-score per feature
   const [engineeredTable, setEngineeredTable] = useState([]); // Stage 4: derived temporal-ratio features
   const [selectionTable, setSelectionTable] = useState([]);   // Stage 5: variance ranking + selected flag
@@ -794,13 +795,30 @@ export default function Page2Pipeline({
               </div>
             ))}
             {selectedFeatures.length > 0 && pipelineStep === 6 && (
-              <div className="flex items-center flex-wrap gap-1.5 pt-1.5">
-                <span className="text-[10px] font-mono text-slate-400 mr-1">Selected features:</span>
-                {selectedFeatures.map((f) => (
-                  <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-800">
-                    {f}
-                  </span>
-                ))}
+              <div className="pt-1.5 space-y-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-mono text-slate-400">Selected features ({selectedFeatures.length}):</span>
+                  <button
+                    type="button"
+                    onClick={() => setFeaturesAsJson((v) => !v)}
+                    className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border border-slate-200 bg-white text-slate-600 hover:border-slate-300 cursor-pointer"
+                  >
+                    {featuresAsJson ? 'view as chips' : 'view as JSON'}
+                  </button>
+                </div>
+                {featuresAsJson ? (
+                  <pre className="text-[9px] font-mono text-slate-700 bg-slate-50 border border-slate-200 rounded-lg p-2.5 overflow-x-auto leading-relaxed">
+{JSON.stringify(selectedFeatures, null, 2)}
+                  </pre>
+                ) : (
+                  <div className="flex items-center flex-wrap gap-1.5">
+                    {selectedFeatures.map((f) => (
+                      <span key={f} className="text-[9px] font-mono font-bold px-1.5 py-0.5 bg-slate-50 border border-slate-200 rounded text-slate-800">
+                        {f}
+                      </span>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

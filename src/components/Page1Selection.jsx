@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowDownRight, Plus, X, Loader2 } from 'lucide-react';
 import { api } from '../api/client';
-import ProductSourceRuleChecklist from './ProductSourceRuleChecklist';
+import DataSourceRuleChecklist from './DataSourceRuleChecklist';
 
 const STATUS_LABEL = {
   published: 'Published',
@@ -20,10 +20,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
   const [isLoading, setIsLoading] = useState(true);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [rulesSource, setRulesSource] = useState(null);
-  const [rulesProduct, setRulesProduct] = useState(null); // product tab inside the popup
   const [statuses, setStatuses] = useState({});
-  const [usage, setUsage] = useState({});          // { sourceId: { productId: bool } }
-  const [productNames, setProductNames] = useState({});
   const [newTitle, setNewTitle] = useState('');
   const [newDesc, setNewDesc] = useState('');
   const [newFields, setNewFields] = useState('');
@@ -36,31 +33,11 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
     api.get('/data-sources/status')
       .then((d) => setStatuses(d.statuses || {}))
       .catch(() => {});
-    api.get('/bre-products/source-usage')
-      .then((d) => { setUsage(d.usage || {}); setProductNames(d.productNames || {}); })
-      .catch(() => {});
   }, []);
 
   const statusOf = (id) => statuses[id] || 'unpublished';
 
-  const productList = useMemo(() => Object.entries(productNames).map(([id, name]) => ({ id, name })), [productNames]);
-
-  const openRules = (source) => {
-    setRulesSource(source);
-    const u = usage[source.id] || {};
-    const firstActive = productList.find((p) => u[p.id])?.id;
-    setRulesProduct(firstActive || productList[0]?.id || null);
-  };
-
-  // "use this data source for the selected product" — same state as Settings › BRE Rule Setting
-  const toggleRulesSourceActive = (next) => {
-    if (!rulesSource || !rulesProduct) return;
-    setUsage((prev) => ({
-      ...prev,
-      [rulesSource.id]: { ...(prev[rulesSource.id] || {}), [rulesProduct]: next },
-    }));
-    api.put(`/bre-products/${rulesProduct}/sources/${rulesSource.id}/active`, { active: next }).catch(() => {});
-  };
+  const openRules = (source) => setRulesSource(source);
 
   const persistSelection = (ids) => {
     setSelectedIds(ids);
@@ -149,25 +126,6 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
                 <p className="text-xs text-slate-500 leading-relaxed">
                   {source.shortDesc}
                 </p>
-
-                {/* Per-product usage — reflects the toggles in Settings › BRE Rule Setting */}
-                {usage[source.id] && Object.keys(usage[source.id]).length > 0 && (
-                  <div className="flex flex-wrap items-center gap-1 pt-1">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wide mr-0.5">Used by</span>
-                    {Object.entries(usage[source.id]).map(([p, on]) => (
-                      <span
-                        key={p}
-                        className={`px-1.5 py-0.5 rounded text-[10px] font-bold border ${
-                          on
-                            ? 'bg-purple-50 text-purple-700 border-purple-200'
-                            : 'bg-slate-50 text-slate-400 border-slate-200 line-through'
-                        }`}
-                      >
-                        {productNames[p] || p}
-                      </span>
-                    ))}
-                  </div>
-                )}
               </div>
 
               {/* Fixed footer — always at the bottom of the card, regardless of description length */}
@@ -312,7 +270,7 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
                     {rulesSource.title}
                   </h2>
                   <p className="text-[11px] text-slate-500 mt-0.5">
-                    Rules are configured per loan product — the same toggles as Settings › BRE Rule Setting.
+                    Data-quality checks for this feed. Configured here only — separate from Settings › BRE Rule Setting.
                   </p>
                 </div>
                 <button
@@ -322,59 +280,10 @@ export default function Page1Selection({ selectedIds, setSelectedIds, onNext }) 
                   <X className="w-5 h-5" />
                 </button>
               </div>
-
-              {/* Product tabs */}
-              <div className="flex flex-wrap items-center gap-1.5">
-                {productList.map((p) => {
-                  const on = !!(usage[rulesSource.id] || {})[p.id];
-                  const sel = rulesProduct === p.id;
-                  return (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => setRulesProduct(p.id)}
-                      className={`px-3 py-1.5 rounded-lg text-[11px] font-bold transition-colors cursor-pointer inline-flex items-center gap-1.5 ${
-                        sel
-                          ? 'bg-[#3b0764] text-white'
-                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                      }`}
-                    >
-                      <span className={`w-1.5 h-1.5 rounded-full ${on ? (sel ? 'bg-emerald-300' : 'bg-emerald-500') : (sel ? 'bg-white/40' : 'bg-slate-300')}`} />
-                      {p.name}
-                    </button>
-                  );
-                })}
-              </div>
-
-              {/* Use this source for the selected product */}
-              {rulesProduct && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2">
-                  <span className="text-[11px] font-bold text-slate-700">
-                    Use <span className="text-purple-700">{rulesSource.title}</span> for {productNames[rulesProduct]}
-                  </span>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={!!(usage[rulesSource.id] || {})[rulesProduct]}
-                    onClick={() => toggleRulesSourceActive(!(usage[rulesSource.id] || {})[rulesProduct])}
-                    className={`relative inline-flex h-5.5 w-10 shrink-0 items-center rounded-full p-0.75 transition-colors cursor-pointer ${
-                      (usage[rulesSource.id] || {})[rulesProduct]
-                        ? 'bg-linear-to-r from-[#4c1d95] to-[#6d28d9]'
-                        : 'bg-slate-200 hover:bg-slate-300'
-                    }`}
-                  >
-                    <span className={`h-4 w-4 rounded-full bg-white shadow-md ring-1 ring-slate-900/5 transition-transform ${
-                      (usage[rulesSource.id] || {})[rulesProduct] ? 'translate-x-4.5' : 'translate-x-0'
-                    }`} />
-                  </button>
-                </div>
-              )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-6 py-5">
-              {rulesProduct
-                ? <ProductSourceRuleChecklist productId={rulesProduct} sourceId={rulesSource.id} />
-                : <p className="text-xs text-slate-400 text-center py-8">No loan products available.</p>}
+              <DataSourceRuleChecklist sourceId={rulesSource.id} />
             </div>
           </div>
         </div>

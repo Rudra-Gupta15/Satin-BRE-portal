@@ -587,9 +587,12 @@ export default function Page3Inference({
     ...gstDeployedModels,
   ];
   // The model list is scoped to the selected input data source: a bank-statement
-  // source shows the bank models, the GST source shows the GST heads.
+  // source shows ALL bank models (Risk / Cashflow / Fraud / Money Balance),
+  // the GST source shows the deployed GST heads.
   const modelsForSource = (srcId) =>
-    deployedModels.filter(m => (srcId === 'gst_data' ? m.kind === 'gst' : m.kind !== 'gst'));
+    srcId === 'gst_data'
+      ? deployedModels.filter(m => m.kind === 'gst')
+      : modelsList.filter(m => m.kind !== 'gst');
   // Multi-select: which deployed models are in scope (default = all of them).
   const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
   // Which one's results are currently shown.

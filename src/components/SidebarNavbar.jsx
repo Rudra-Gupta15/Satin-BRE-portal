@@ -105,14 +105,14 @@ export default function SidebarNavbar({ activeView, setActiveView, onReset, user
                     key={c.id}
                     type="button"
                     onClick={() => setActiveView(c.id)}
-                    className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-left text-[13.5px] transition-all cursor-pointer ${
+                    className={`w-full flex items-center gap-3 px-3 py-3 rounded-xl text-left transition-all cursor-pointer ${
                       on
                         ? 'bg-linear-to-br from-[#2e1065] via-[#4c1d95] to-[#6d28d9] text-white shadow-lg shadow-purple-950/30 font-bold'
                         : 'text-slate-500 hover:text-slate-800 hover:bg-white/60 font-semibold'
                     }`}
                   >
                     <span className={`w-2 h-2 rounded-full shrink-0 ${on ? 'bg-white' : 'bg-slate-300'}`} />
-                    <span className="truncate">{c.name}</span>
+                    <span className="text-sm truncate">{c.name}</span>
                   </button>
                 );
               })}
