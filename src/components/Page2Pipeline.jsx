@@ -30,6 +30,182 @@ function StatTile({ label, value, tone = 'text-slate-900' }) {
   );
 }
 
+/* Small inline mode-switcher for the upload card (Folder / File / DB Folder /
+   DB File). Deliberately its own tiny component rather than the general
+   <Select> — that one's styled for prominent, standalone pickers (a big
+   highlighted pill for the active row) which looks oversized and mismatched
+   next to a compact action button for a 4-word utility choice like this. */
+function SourceModeMenu({ value, onChange, options }) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef(null);
+  const selected = options.find((o) => o.value === value) || options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (!rootRef.current?.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  return (
+    <div ref={rootRef} className="relative w-28 shrink-0">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`w-full flex items-center justify-between gap-1.5 bg-white border rounded-lg px-2.5 py-1.5 text-[11px] font-bold text-slate-700 cursor-pointer transition-colors ${
+          open ? 'border-[#ea580c]' : 'border-slate-200 hover:border-slate-300'
+        }`}
+      >
+        <span className="truncate">{selected.label}</span>
+        <ChevronDown className={`w-3 h-3 text-slate-400 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+
+      {open && (
+        <ul
+          role="listbox"
+          className="absolute z-20 left-0 right-0 top-full mt-1 rounded-lg border border-slate-200 bg-white shadow-lg shadow-slate-900/10 py-1 overflow-hidden"
+        >
+          {options.map((o) => {
+            const isSel = o.value === value;
+            return (
+              <li key={o.value}>
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={isSel}
+                  onClick={(e) => { e.stopPropagation(); onChange(o.value); setOpen(false); }}
+                  className={`w-full flex items-center justify-between gap-1.5 px-2.5 py-1.5 text-[11px] font-semibold text-left cursor-pointer ${
+                    isSel ? 'bg-orange-50 text-slate-900' : 'text-slate-600 hover:bg-slate-50'
+                  }`}
+                >
+                  <span className="truncate">{o.label}</span>
+                  {isSel && <Check className="w-3 h-3 text-[#ea580c] shrink-0 stroke-3" />}
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/* "Database Folder" / "Database File" upload mode: connect to the bank's or
+   company's own database, then pick a schema (folder) or a table (file) from
+   it. Real connection test — no sample DB exists yet, so it'll show
+   "not connected" until one is actually wired up. */
+function DbBrowseModal({ mode, onCancel, onPick }) {
+  const isFolder = mode === 'db-folder';
+  const [connStr, setConnStr] = useState('');
+  const [connecting, setConnecting] = useState(false);
+  const [result, setResult] = useState(null); // { connected, detail, schemas }
+  const [openSchema, setOpenSchema] = useState(null);
+
+  const connect = async () => {
+    if (!connStr.trim()) return;
+    setConnecting(true);
+    setResult(null);
+    try {
+      const data = await api.post('/external-db/connect', { connectionString: connStr.trim() });
+      setResult(data);
+    } catch (err) {
+      setResult({ connected: false, detail: err.message });
+    } finally {
+      setConnecting(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+      <div className="bg-white border border-slate-200 rounded-3xl max-w-lg w-full p-6 shadow-2xl animate-fadeIn max-h-[85vh] flex flex-col">
+        <div className="flex items-start justify-between mb-1">
+          <h3 className="text-base font-bold text-slate-900">
+            {isFolder ? 'Select Folder from Database' : 'Select File from Database'}
+          </h3>
+          <button type="button" onClick={onCancel} className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-500 mb-4">
+          Connect to your bank's or company's database{isFolder ? ' and pick a schema to use as the source folder.' : ' and pick a table to use as the source file.'}
+        </p>
+
+        <div className="flex items-center gap-2">
+          <input
+            type="text"
+            value={connStr}
+            onChange={(e) => setConnStr(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') connect(); }}
+            placeholder="postgresql://user:pass@host:5432/dbname"
+            className="flex-1 bg-slate-50/40 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#ea580c]"
+          />
+          <button
+            type="button"
+            disabled={connecting || !connStr.trim()}
+            onClick={connect}
+            className="px-4 py-2 rounded-xl btn-orange text-white text-xs font-bold shadow-md shadow-orange-900/15 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer shrink-0"
+          >
+            {connecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Connect'}
+          </button>
+        </div>
+
+        {result && (
+          <div className={`mt-3 text-[11px] font-mono px-3 py-2 rounded-lg border ${
+            result.connected ? 'bg-emerald-50 border-emerald-200 text-emerald-800' : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}>
+            {result.connected ? `Connected — ${result.detail}` : `Not connected — ${result.detail}`}
+          </div>
+        )}
+
+        {result?.connected && (
+          <div className="mt-3 flex-1 overflow-y-auto border border-slate-200 rounded-xl divide-y divide-slate-100">
+            {(result.schemas || []).length === 0 && (
+              <p className="text-[11px] text-slate-400 p-3">No tables found in this database.</p>
+            )}
+            {(result.schemas || []).map((s) => (
+              <div key={s.schema ?? '(default)'}>
+                {isFolder ? (
+                  <button
+                    type="button"
+                    onClick={() => onPick(s.schema, undefined)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-slate-50 flex items-center justify-between gap-2 cursor-pointer"
+                  >
+                    <span className="text-xs font-bold text-slate-800">{s.schema ?? '(default schema)'}</span>
+                    <span className="text-[10px] text-slate-400 font-mono">{s.tables.length} table{s.tables.length === 1 ? '' : 's'}</span>
+                  </button>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => setOpenSchema(openSchema === s.schema ? null : s.schema)}
+                      className="w-full text-left px-3 py-2 bg-slate-50/60 flex items-center justify-between gap-2 cursor-pointer"
+                    >
+                      <span className="text-[11px] font-bold text-slate-600">{s.schema ?? '(default schema)'}</span>
+                      <ChevronDown className={`w-3.5 h-3.5 text-slate-400 transition-transform ${openSchema === s.schema ? 'rotate-180' : ''}`} />
+                    </button>
+                    {openSchema === s.schema && s.tables.map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        onClick={() => onPick(s.schema, t)}
+                        className="w-full text-left pl-6 pr-3 py-2 hover:bg-orange-50 text-xs font-mono text-slate-700 cursor-pointer"
+                      >
+                        {t}
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function Page2Pipeline({
   selectedIds,
   onNext,
@@ -50,6 +226,13 @@ export default function Page2Pipeline({
   const [uploadResult, setUploadResult] = useState(null); // our own post-upload summary popup
   const [statusSaved, setStatusSaved] = useState(null); // brief "Saved as X" confirmation
   const folderInputRef = useRef({}); // { [sourceId]: <input webkitdirectory> } — fallback picker
+  const fileInputRef = useRef({}); // { [sourceId]: <input> (single file) } — fallback picker
+
+  // Upload source: local file, local folder, or a table/schema in an external
+  // (bank / company) database once one is connected.
+  const [sourceMode, setSourceMode] = useState({}); // { [sourceId]: 'folder'|'file'|'db-folder'|'db-file' }
+  const [dbModalFor, setDbModalFor] = useState(null); // sourceId whose DB-browse modal is open, or null
+  const [dbLinked, setDbLinked] = useState({}); // { [sourceId]: { mode, schema, table? } }
 
   // Footer: stamp every selected data source with a publish status.
   const saveStatus = async (status) => {
@@ -60,10 +243,16 @@ export default function Page2Pipeline({
     setTimeout(() => setStatusSaved(null), 2500);
   };
 
-  // Raw Data Noise Level State — populated from the backend after a pipeline run
-  // (computed server-side from how many selected sources have an uploaded file)
-  const [rawNoisePercent, setRawNoisePercent] = useState(60);
-  const isLLMActiveForNoise = rawNoisePercent > 40;
+  // Raw Data Noise — per source, never blended into one average (a clean
+  // source would otherwise hide a dirty one). { [sourceId]: { label,
+  // cleanlinessPercent, noisePercent, llmActive, fileCount } }
+  const [noiseBySource, setNoiseBySource] = useState({});
+  // What the AI recovery pass actually did for a high-noise source — real
+  // recovered-row count + a specific reason for every row it still couldn't
+  // save. { [sourceId]: { mode, totalRows, droppedRows, recoveredRows,
+  // droppedDetail: [{date,narration,reason}], droppedDetailTruncated } }
+  const [cleaningBySource, setCleaningBySource] = useState({});
+  const [expandedCleaning, setExpandedCleaning] = useState({}); // { [sourceId]: true }
 
   // Pipeline state (Steps 1..5: Data Gathering, Preprocess, Normalize, Feature Eng, Data Selection)
   const [isPipelineRunning, setIsPipelineRunning] = useState(false);
@@ -107,29 +296,57 @@ export default function Page2Pipeline({
     return `${(Math.abs(n) <= 1 ? n * 100 : n).toFixed(1)}%`;
   };
 
+  // Each domain owns its own evaluation-summary endpoint — no shared backend
+  // dispatcher. Fetch all three and merge client-side into the one shape the
+  // rest of this component already reads (evalSummary.sessionModels /
+  // .gstModels / .bbpsModels, etc.).
   const loadEvalSummary = () => {
-    api.get('/models/evaluation/summary').then(setEvalSummary).catch(() => {});
+    Promise.all([
+      api.get('/models/evaluation/summary').catch(() => null),
+      api.get('/gst/evaluation/summary').catch(() => null),
+      api.get('/bbps/evaluation/summary').catch(() => null),
+    ]).then(([aa, gst, bbps]) => {
+      setEvalSummary({
+        sessionModels: aa?.sessionModels || [],
+        sessionAlgorithm: aa?.sessionAlgorithm,
+        sessionTrainedAt: aa?.sessionTrainedAt,
+        sessionTxCount: aa?.sessionTxCount,
+        datasetModel: aa?.datasetModel || null,
+        gstModels: gst?.models || [],
+        gstAlgorithm: gst?.algorithm,
+        gstTrainedAt: gst?.trainedAt,
+        bbpsModels: bbps?.models || [],
+        bbpsAlgorithm: bbps?.algorithm,
+        bbpsTrainedAt: bbps?.trainedAt,
+      });
+    });
   };
 
   // Anomaly & fraud patterns found in the training data, computed after training.
   const [patterns, setPatterns] = useState(null);
   const loadPatterns = () => {
-    const gst = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m.kind === 'gst');
-    api.get(gst ? '/gst/patterns' : '/models/patterns')
+    const list = readyModelsList.length ? readyModelsList : trainedModels;
+    const gst = list.some((m) => m.kind === 'gst');
+    const bbps = list.some((m) => m.kind === 'bbps');
+    api.get(gst ? '/gst/patterns' : bbps ? '/bbps/patterns' : '/models/patterns')
       .then((d) => setPatterns(d?.available ? d : null))
       .catch(() => setPatterns(null));
   };
   const loadEvaluation = (mid) => {
-    api.get('/models/evaluation', { model_id: mid }).then((d) => setModelEval(d.evaluation || null)).catch(() => {});
+    const path = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : '/models/evaluation';
+    api.get(path, { model_id: mid }).then((d) => setModelEval(d.evaluation || null)).catch(() => {});
     loadEvalSummary();
   };
   useEffect(() => { loadEvaluation(evalModelId); }, [evalModelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // This session trained the GST model, not the bank models — the eval panel
-  // (and everything else) should then show ONLY the GST heads.
+  // This session trained the GST (or BBPS) model, not the bank models — the
+  // eval panel (and everything else) should then show ONLY that family's heads.
   const isGstRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'gst');
+  const isBbpsRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'bbps');
   const evalModelsForRun = isGstRun
     ? (evalSummary?.gstModels || [])
+    : isBbpsRun
+    ? (evalSummary?.bbpsModels || [])
     : (evalSummary?.sessionModels || []);
 
   // Focus the first model of whichever family this session trained.
@@ -142,7 +359,8 @@ export default function Page2Pipeline({
   const reEvaluate = async () => {
     setReEvaluating(true);
     try {
-      const d = await api.post(`/models/evaluation/${evalModelId}/re-run`);
+      const base = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : '/models/evaluation';
+      const d = await api.post(`${base}/${evalModelId}/re-run`);
       setModelEval(d.evaluation || null);
       loadEvalSummary();
     } catch (err) {
@@ -158,7 +376,8 @@ export default function Page2Pipeline({
     api.get('/pipeline/status').then((data) => {
       if (data.pipeline.status === 'done') {
         setPipelineStep(6);
-        setRawNoisePercent(data.pipeline.noisePercent);
+        setNoiseBySource(data.pipeline.noiseBySource || {});
+        setCleaningBySource(data.pipeline.cleaningBySource || {});
         setProcessedTableRows(data.pipeline.processedTable || []);
         setShowProcessedTable(true);
       }
@@ -214,6 +433,7 @@ export default function Page2Pipeline({
   // trust warning. Falls back to the hidden <input webkitdirectory> on browsers
   // without it (Firefox / Safari).
   const pickFolder = async (id) => {
+    setDbLinked(prev => { const n = { ...prev }; delete n[id]; return n; }); // switching to a local folder un-links any DB source
     if (typeof window.showDirectoryPicker !== 'function') {
       folderInputRef.current?.[id]?.click();
       return;
@@ -250,6 +470,54 @@ export default function Page2Pipeline({
       return;
     }
     handleFolderUpload(id, files);
+  };
+
+  // Single-file counterpart of pickFolder — same File System Access API,
+  // same fallback, just one file instead of a whole directory tree.
+  const pickSingleFile = async (id) => {
+    setDbLinked(prev => { const n = { ...prev }; delete n[id]; return n; }); // switching to a local file un-links any DB source
+    if (typeof window.showOpenFilePicker !== 'function') {
+      fileInputRef.current?.[id]?.click();
+      return;
+    }
+    let handles;
+    try {
+      handles = await window.showOpenFilePicker({
+        id: 'bre-statement-file',
+        multiple: false,
+        types: [{ description: 'Statement files', accept: {
+          'application/octet-stream': ACCEPTED_EXT,
+        } }],
+      });
+    } catch {
+      return; // user cancelled
+    }
+    const file = await handles[0].getFile();
+    if (!isAccepted(file.name)) {
+      alert('That file type is not supported — pick a PDF, CSV, TSV, TXT, JSON, MD or XLSX file.');
+      return;
+    }
+    handleFolderUpload(id, [file]);
+  };
+
+  // Dispatches the upload-card button to the right picker for the source's
+  // currently-selected mode.
+  const handleUploadClick = (id) => {
+    const mode = sourceMode[id] || 'folder';
+    if (mode === 'folder') pickFolder(id);
+    else if (mode === 'file') pickSingleFile(id);
+    else setDbModalFor(id); // 'db-folder' / 'db-file'
+  };
+
+  // Called by the DB-browse modal once the user picks a schema (folder mode)
+  // or a table (file mode). Nothing is ingested yet — no sample bank/company
+  // DB exists to pull real rows from — this just records what was picked so
+  // the pipeline has something to point at once that ingestion path exists.
+  const linkDbSelection = (id, mode, schema, table) => {
+    setDbLinked(prev => ({ ...prev, [id]: { mode, schema, table } }));
+    setUploadedFiles(prev => { const n = { ...prev }; delete n[id]; return n; }); // clear any local upload
+    setParsedStatements(prev => { const n = { ...prev }; delete n[id]; return n; });
+    setDbModalFor(null);
   };
 
   // Uploads a folder of files for one source. The backend byte-scans and parses
@@ -372,7 +640,8 @@ export default function Page2Pipeline({
 
     setPipelineStep(6);
     setIsPipelineRunning(false);
-    setRawNoisePercent(result.pipeline.noisePercent);
+    setNoiseBySource(result.pipeline.noiseBySource || {});
+    setCleaningBySource(result.pipeline.cleaningBySource || {});
     setProcessedTableRows(result.pipeline.processedTable);
     setStoredFile(result.storedFile);
     setSelectedFeatures(result.selectedFeatures || []);
@@ -392,13 +661,24 @@ export default function Page2Pipeline({
     setRealFeatures(null);
     setGstFeatures(null);
 
+    // Each data source trains on its OWN endpoint — GST -> /gst/train, BBPS
+    // -> /bbps/train, everything else -> /models/train (AA bank models).
+    // No shared dispatcher: the source decides where this goes, not the backend.
+    const srcId = activeUpload ? activeUpload.id : null;
     let data;
     try {
-      data = await api.post('/models/train', {
-        algorithm: selectedMLAlgorithm,
-        datasetFile: selectedDatasetFile,
-        sourceId: activeUpload ? activeUpload.id : null,
-      });
+      if (srcId === 'gst_data') {
+        const form = new FormData();
+        form.append('algorithm', selectedMLAlgorithm);
+        data = await api.postForm('/gst/train', form);
+      } else if (srcId === 'bbps_utility') {
+        data = await api.post('/bbps/train', { algorithm: selectedMLAlgorithm });
+      } else {
+        data = await api.post('/models/train', {
+          algorithm: selectedMLAlgorithm,
+          datasetFile: selectedDatasetFile,
+        });
+      }
     } catch (err) {
       setIsTrainingRunning(false);
       alert(err.message);
@@ -496,10 +776,26 @@ export default function Page2Pipeline({
             const pageFiles = files.slice(start, start + PER_PAGE);
             const goPage = (p) => setFilePages(prev => ({ ...prev, [source.id]: p }));
 
+            const mode = sourceMode[source.id] || 'folder';
+            const linked = dbLinked[source.id];
+            const BTN_LABEL = {
+              folder: hasFiles ? 'Change Folder' : 'Upload Folder',
+              file: hasFiles ? 'Change File' : 'Upload File',
+              'db-folder': 'Select Folder',
+              'db-file': 'Select File',
+            };
+
             return (
-              <div key={source.id} className="rounded-xl border border-slate-200 overflow-hidden bg-white">
-                {/* Card head: source + folder summary + action */}
-                <div className="flex items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-b border-slate-100">
+              <div key={source.id} className="rounded-xl border border-slate-200 bg-white">
+                {/* Card head: source + folder summary + action.
+                    flex-wrap (not a sm: breakpoint) because the sidebar eats a
+                    fixed 256px regardless of viewport width, so this row can
+                    run out of room well before any Tailwind breakpoint fires.
+                    No overflow-hidden on the card itself (rounded-t-xl here
+                    does the corner-clipping instead) — the source-mode dropdown
+                    is an absolutely-positioned popover that must be able to
+                    extend past the card's own box without getting cut off. */}
+                <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 bg-slate-50/70 border-b border-slate-100 rounded-t-xl">
                   <div className="flex items-center gap-2.5 min-w-0">
                     <span className="grid place-items-center w-8 h-8 rounded-lg bg-white border border-slate-200 text-slate-400 shrink-0">
                       <FolderUp className="w-4 h-4" />
@@ -507,7 +803,9 @@ export default function Page2Pipeline({
                     <div className="min-w-0">
                       <div className="font-bold text-xs text-slate-900 truncate">{source.title}</div>
                       <div className="text-[11px] text-slate-500 truncate">
-                        {!hasFiles
+                        {linked
+                          ? `Linked to DB ${linked.table ? `table ${linked.schema ? `${linked.schema}.` : ''}${linked.table}` : `schema ${linked.schema ?? '(default)'}`}`
+                          : !hasFiles
                           ? 'No folder uploaded'
                           : gstReturns
                           ? `${files.length} file${files.length === 1 ? '' : 's'} · ${totalGstBiz} business${totalGstBiz === 1 ? '' : 'es'}`
@@ -518,15 +816,27 @@ export default function Page2Pipeline({
                     </div>
                   </div>
 
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); pickFolder(source.id); }}
-                    className="px-3 py-1.5 rounded-lg btn-orange text-white text-[11px] font-bold cursor-pointer shrink-0 flex items-center gap-1 shadow-sm"
-                  >
-                    <UploadCloud className="w-3.5 h-3.5" />
-                    <span>{hasFiles ? 'Change Folder' : 'Upload Folder'}</span>
-                  </button>
-                  {/* Fallback picker for browsers without showDirectoryPicker */}
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <SourceModeMenu
+                      value={mode}
+                      onChange={(v) => setSourceMode(prev => ({ ...prev, [source.id]: v }))}
+                      options={[
+                        { value: 'folder', label: 'Folder' },
+                        { value: 'file', label: 'File' },
+                        { value: 'db-folder', label: 'DB Folder' },
+                        { value: 'db-file', label: 'DB File' },
+                      ]}
+                    />
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleUploadClick(source.id); }}
+                      className="px-3 py-1.5 rounded-lg btn-orange text-white text-[11px] font-bold cursor-pointer shrink-0 flex items-center gap-1 shadow-sm whitespace-nowrap"
+                    >
+                      <UploadCloud className="w-3.5 h-3.5" />
+                      <span>{BTN_LABEL[mode]}</span>
+                    </button>
+                  </div>
+                  {/* Fallback pickers for browsers without the File System Access API */}
                   <input
                     ref={(el) => { folderInputRef.current[source.id] = el; }}
                     type="file"
@@ -541,13 +851,55 @@ export default function Page2Pipeline({
                       e.target.value = '';
                     }}
                   />
+                  <input
+                    ref={(el) => { fileInputRef.current[source.id] = el; }}
+                    type="file"
+                    className="hidden"
+                    tabIndex={-1}
+                    accept={ACCEPTED_EXT.join(',')}
+                    onChange={(e) => {
+                      if (e.target.files?.length) {
+                        handleFolderUpload(source.id, [e.target.files[0]]);
+                      }
+                      e.target.value = '';
+                    }}
+                  />
                 </div>
 
+                {dbModalFor === source.id && (
+                  <DbBrowseModal
+                    mode={mode}
+                    onCancel={() => setDbModalFor(null)}
+                    onPick={(schema, table) => linkDbSelection(source.id, mode, schema, table)}
+                  />
+                )}
+
                 <div className="p-4 space-y-2.5">
-                  {!isScanning && !hasFiles && (
+                  {!isScanning && linked && (
+                    <p className="text-[11px] text-slate-400">
+                      Selection recorded — pulling real rows from a connected database isn't wired into the
+                      pipeline yet. Once a bank/company DB is connected for real, this is what it'll ingest.
+                    </p>
+                  )}
+
+                  {!isScanning && !hasFiles && !linked && (mode === 'db-folder' || mode === 'db-file') && (
+                    <p className="text-[11px] text-slate-400">
+                      {mode === 'db-folder'
+                        ? 'Connect to your bank/company database and pick a schema to use as the source folder.'
+                        : 'Connect to your bank/company database and pick a table to use as the source file.'}
+                    </p>
+                  )}
+
+                  {!isScanning && !hasFiles && !linked && mode === 'folder' && (
                     <p className="text-[11px] text-slate-400">
                       Select a folder of statements — any mix of PDF, CSV, TSV, TXT, JSON, MD or XLSX.
                       Other file types in the folder are skipped.
+                    </p>
+                  )}
+
+                  {!isScanning && !hasFiles && !linked && mode === 'file' && (
+                    <p className="text-[11px] text-slate-400">
+                      Select a single statement file — PDF, CSV, TSV, TXT, JSON, MD or XLSX.
                     </p>
                   )}
 
@@ -634,6 +986,65 @@ export default function Page2Pipeline({
                               </div>
                             </div>
                           </div>
+                        )}
+
+                        {f.bbps && (
+                          f.bbps.available ? (
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <StatTile label="Utility Accounts" value={f.bbps.utilityAccounts} />
+                              <StatTile label="Payments Found" value={f.bbps.paymentsLast12m} />
+                              <StatTile
+                                label="Punctuality Index"
+                                tone="text-purple-700"
+                                value={f.bbps.utilityBillPunctualityIndex}
+                              />
+                              <StatTile
+                                label="Missed Payments"
+                                tone={f.bbps.missedPaymentCount > 0 ? 'text-rose-600' : 'text-emerald-600'}
+                                value={f.bbps.missedPaymentCount}
+                              />
+                              <div className="col-span-2 flex flex-wrap gap-1">
+                                {f.bbps.byType.map((t) => (
+                                  <span key={t.utilityType} className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200">
+                                    {t.utilityType} · ₹{t.averageBillAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })} avg
+                                  </span>
+                                ))}
+                              </div>
+
+                              {f.bbps.model?.available && (
+                                <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 flex items-center justify-between">
+                                  <div>
+                                    <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">BBPS Model · Stability Score</div>
+                                    <div className="text-sm font-extrabold text-purple-700">{f.bbps.model.stabilityScore}</div>
+                                  </div>
+                                  <span className={`text-[10px] font-extrabold px-2 py-1 rounded-md border ${
+                                    f.bbps.model.riskFlag === 'LOW' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : f.bbps.model.riskFlag === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>{f.bbps.model.riskFlag} RISK</span>
+                                </div>
+                              )}
+
+                              {f.bbps.rules && (
+                                <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
+                                  <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">BBPS Rules · {f.bbps.rules.decision}</div>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">{f.bbps.rules.passed} passed</span>
+                                    {f.bbps.rules.failed > 0 && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200">{f.bbps.rules.failed} failed</span>
+                                    )}
+                                    {f.bbps.rules.skipped > 0 && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-200">{f.bbps.rules.skipped} skipped</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                              {f.bbps.message}
+                            </p>
+                          )
                         )}
 
                         {summary && summary.transactionCount > 0 && (
@@ -866,29 +1277,106 @@ export default function Page2Pipeline({
         )}
       </SectionCard>
 
-      {/* 3. AI Noise Inspection & Activation Box */}
+      {/* 3. AI Noise Inspection & Activation Box — one check per data source,
+          never blended into a single average (that would let a clean source
+          hide a dirty one). Each source's own worst-file noise% decides its
+          own threshold independently. */}
       <SectionCard
         title="AI Noise Inspection & Activation"
-        sub={
-          <>
-            Raw Data Noise: <strong className="text-slate-800">{rawNoisePercent}%</strong>{' '}
-            {isLLMActiveForNoise ? '(Exceeds 40% Noise Threshold Limit)' : '(Within Acceptable Threshold)'}
-          </>
-        }
-        action={
-          <div className={`px-3.5 py-2 rounded-lg border text-xs font-bold shrink-0 flex items-center gap-2 ${
-            isLLMActiveForNoise
-              ? 'bg-slate-100 border-slate-200 text-slate-800'
-              : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-          }`}>
-            <span className={`w-2 h-2 rounded-full animate-pulse ${isLLMActiveForNoise ? 'bg-purple-600' : 'bg-emerald-600'}`}></span>
-            <span>{isLLMActiveForNoise ? 'AI Activated' : 'Direct Ingestion (Clean)'}</span>
-          </div>
-        }
+        sub="Per data source — each checked against the 40% threshold on its own, not averaged together."
       >
-        <p className="text-[11px] text-slate-500">
-          When raw noise exceeds the 40% threshold, the AI cleaning pass is activated automatically before
-          ingestion; otherwise the vector is ingested directly.
+        <div className="space-y-2">
+          {Object.entries(noiseBySource).length === 0 && (
+            <p className="text-[11px] text-slate-400">Run the pipeline to see each source's noise check.</p>
+          )}
+          {Object.entries(noiseBySource).map(([sid, n]) => {
+            const clean = cleaningBySource[sid];
+            const hasDetail = n.llmActive && clean;
+            const open = !!expandedCleaning[sid];
+            return (
+            <div key={sid} className="rounded-xl border border-slate-200 bg-slate-50/50 overflow-hidden">
+              <div className="flex items-center justify-between gap-3 px-3.5 py-2.5">
+                <div className="min-w-0">
+                  <div className="text-xs font-bold text-slate-800 truncate">
+                    {n.label}
+                    {n.fileCount > 1 && (
+                      <span className="text-slate-400 font-semibold">
+                        {' · '}
+                        {n.worstFileName ? <span className="text-rose-600">{n.worstFileName}</span> : 'one file'}
+                        {' is the worst of '}{n.fileCount}{' files'}
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-slate-500 mt-0.5">
+                    Raw Data Noise: <strong className="text-slate-700">{n.noisePercent}%</strong>{' '}
+                    {n.llmActive ? '(Exceeds 40% Noise Threshold Limit)' : '(Within Acceptable Threshold)'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {hasDetail && (
+                    <button
+                      type="button"
+                      onClick={() => setExpandedCleaning(prev => ({ ...prev, [sid]: !prev[sid] }))}
+                      className="flex items-center gap-1 text-[11px] font-bold text-purple-700 hover:underline cursor-pointer"
+                    >
+                      <span>{clean.recoveredRows} recovered, {clean.droppedRows} dropped</span>
+                      <ChevronDown className={`w-3.5 h-3.5 transition-transform ${open ? 'rotate-180' : ''}`} />
+                    </button>
+                  )}
+                  {n.llmActive && hasDetail ? (
+                    // The recovery pass already ran (this is a completed pipeline
+                    // response, not a live in-progress state) — say so plainly
+                    // instead of leaving "AI Activated" up forever as if it's
+                    // still running.
+                    <div className="px-3 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 bg-emerald-50 border-emerald-200 text-emerald-800">
+                      <BadgeCheck className="w-3.5 h-3.5" />
+                      <span>Clean Done</span>
+                    </div>
+                  ) : (
+                    <div className={`px-3 py-1.5 rounded-lg border text-[11px] font-bold flex items-center gap-1.5 ${
+                      n.llmActive
+                        ? 'bg-slate-100 border-slate-200 text-slate-800'
+                        : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full animate-pulse ${n.llmActive ? 'bg-purple-600' : 'bg-emerald-600'}`}></span>
+                      <span>{n.llmActive ? 'AI Activated' : 'Direct Ingestion (Clean)'}</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {hasDetail && open && (
+                <div className="px-3.5 pb-3 pt-1 border-t border-slate-200 bg-white">
+                  <p className="text-[11px] text-slate-600 mt-2">
+                    AI recovery pass: {clean.totalRows} row(s) checked — {clean.recoveredRows} recovered
+                    (amount reconstructed from the running balance or the narration text), {clean.droppedRows} left
+                    out because nothing could reconstruct a usable amount.
+                  </p>
+                  {clean.droppedDetail.length > 0 && (
+                    <div className="mt-2 space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                      {clean.droppedDetail.map((d, i) => (
+                        <div key={i} className="text-[11px] rounded-lg border border-rose-200 bg-rose-50 px-2.5 py-1.5">
+                          <span className="font-bold text-rose-800">{d.date}</span>
+                          <span className="text-slate-600"> — {d.narration}</span>
+                          <div className="text-rose-700 mt-0.5">Left out: {d.reason}.</div>
+                        </div>
+                      ))}
+                      {clean.droppedDetailTruncated > 0 && (
+                        <p className="text-[10px] text-slate-400">
+                          + {clean.droppedDetailTruncated} more, same reasoning.
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-slate-500 mt-3">
+          When a source's raw noise exceeds the 40% threshold, the AI cleaning pass is activated automatically
+          before ingestion for that source; otherwise its vector is ingested directly.
         </p>
       </SectionCard>
 
@@ -1322,15 +1810,15 @@ export default function Page2Pipeline({
             <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-700" /> Model Evaluation
               <span className="text-[9px] font-mono text-slate-400 font-normal">
-                {isGstRun ? 'GST · real 3-fold CV' : 'real 5-fold cross-validation'}
+                {isGstRun ? 'GST · real 3-fold CV' : isBbpsRun ? 'BBPS · real 3-fold CV' : 'real 5-fold cross-validation'}
               </span>
             </h2>
             <div className="flex items-center gap-2">
-              {(isGstRun ? evalSummary.gstTrainedAt : evalSummary.sessionTrainedAt) && (
+              {(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : evalSummary.sessionTrainedAt) && (
                 <span className="text-[9px] font-mono text-slate-400 hidden sm:inline">
-                  {isGstRun ? evalSummary.gstAlgorithm : evalSummary.sessionAlgorithm}
+                  {isGstRun ? evalSummary.gstAlgorithm : isBbpsRun ? evalSummary.bbpsAlgorithm : evalSummary.sessionAlgorithm}
                   {' · '}
-                  {new Date(isGstRun ? evalSummary.gstTrainedAt : evalSummary.sessionTrainedAt).toLocaleString()}
+                  {new Date(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : evalSummary.sessionTrainedAt).toLocaleString()}
                 </span>
               )}
               <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
@@ -1354,7 +1842,7 @@ export default function Page2Pipeline({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-50">
-                {!isGstRun && evalSummary.sessionModels?.filter((m) => m.kind !== 'pattern').map((m) => {
+                {!isGstRun && !isBbpsRun && evalSummary.sessionModels?.filter((m) => m.kind !== 'pattern').map((m) => {
                   const sel = m.modelId === evalModelId;
                   return (
                     <tr key={m.modelId}
@@ -1371,7 +1859,7 @@ export default function Page2Pipeline({
                     </tr>
                   );
                 })}
-                {!isGstRun && evalSummary.datasetModel && (
+                {!isGstRun && !isBbpsRun && evalSummary.datasetModel && (
                   <tr className="bg-emerald-50/50">
                     <td className="py-1.5 px-3 font-bold text-slate-800">
                       Population Model <span className="text-[8px] bg-emerald-600 text-white px-1 py-0.5 rounded">v{evalSummary.datasetModel.version}</span>
@@ -1402,6 +1890,24 @@ export default function Page2Pipeline({
                     </tr>
                   );
                 })}
+                {isBbpsRun && evalSummary.bbpsModels?.filter((m) => m.kind !== 'pattern').map((m) => {
+                  const sel = m.modelId === evalModelId;
+                  return (
+                    <tr key={m.modelId}
+                      onClick={() => setEvalModelId(m.modelId)}
+                      className={`cursor-pointer ${sel ? 'bg-slate-50/70' : 'hover:bg-purple-50/20'}`}>
+                      <td className="py-1.5 px-3 font-bold text-slate-800">
+                        {sel && <span className="text-purple-500">▸ </span>}{m.name}
+                        <span className="ml-1.5 text-[8px] font-black text-purple-700 bg-purple-100 border border-purple-200 rounded px-1">BBPS</span>
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.precision)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.recall)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.f1)}</td>
+                      <td className="py-1.5 px-3 text-right text-purple-400 text-[9px]">{sel ? 'shown below' : 'view'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1411,7 +1917,7 @@ export default function Page2Pipeline({
           <div className="space-y-2 border border-slate-200 rounded-lg bg-slate-50/20 p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-mono font-bold text-purple-600 uppercase">
-                {[...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || [])]
+                {[...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || []), ...(evalSummary.bbpsModels || [])]
                   .find((x) => x.modelId === evalModelId)?.name} — detail
               </span>
               {modelEval.evalMetrics.metricMeta?.cvTitle && (
@@ -1475,6 +1981,8 @@ export default function Page2Pipeline({
           <p className="text-[9px] text-slate-400 font-mono">
             {isGstRun
               ? 'GST heads: real 3-fold CV on the GST underwriting corpus. '
+              : isBbpsRun
+              ? 'BBPS heads: real 3-fold CV on the BBPS utility-payment corpus. '
               : 'Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). '}
             Click a model row to see its per-fold detail below.
           </p>

@@ -89,6 +89,38 @@ export default function AiArchitecture({ hideHeader = false }) {
   };
   useEffect(() => { loadRegistry(); }, []);
 
+  // ── GST model training history (separate registry/corpus, same idea) ─────
+  const [gstRegistry, setGstRegistry] = useState([]);
+  const [gstActive, setGstActive] = useState(null);
+  const loadGstRegistry = () => {
+    api.get('/gst/model/registry').then((d) => {
+      setGstRegistry(d.versions || []);
+      setGstActive(d.active ?? null);
+    }).catch(() => {});
+  };
+  useEffect(() => { loadGstRegistry(); }, []);
+
+  const activateGstVersion = async (v) => {
+    await api.put('/gst/model/active', { version: v }).catch(() => {});
+    loadGstRegistry();
+  };
+
+  // ── BBPS model training history (separate registry/corpus, same idea) ────
+  const [bbpsRegistry, setBbpsRegistry] = useState([]);
+  const [bbpsActive, setBbpsActive] = useState(null);
+  const loadBbpsRegistry = () => {
+    api.get('/bbps/model/registry').then((d) => {
+      setBbpsRegistry(d.versions || []);
+      setBbpsActive(d.active ?? null);
+    }).catch(() => {});
+  };
+  useEffect(() => { loadBbpsRegistry(); }, []);
+
+  const activateBbpsVersion = async (v) => {
+    await api.put('/bbps/model/active', { version: v }).catch(() => {});
+    loadBbpsRegistry();
+  };
+
   const trainOnDataset = async (file) => {
     setDatasetTraining(true);
     setDatasetMsg('');
@@ -376,7 +408,7 @@ export default function AiArchitecture({ hideHeader = false }) {
         </div>
       </div>
 
-      {/* SECTIONS 3 & 4 hidden per request (Data Cleanliness Threshold, Risk-Model Training) */}
+      {/* SECTION 3 hidden per request (Data Cleanliness Threshold) */}
       {false && (<>
       {/* SECTION 3: Data Quality & AI Activation Threshold */}
       <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-5 shadow-xs">
@@ -408,6 +440,7 @@ export default function AiArchitecture({ hideHeader = false }) {
         </div>
 
       </div>
+      </>)}
 
       {/* SECTION 4: Risk-Model Training (dataset corpus + versioned registry) */}
       <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-5 shadow-xs">
@@ -491,7 +524,100 @@ export default function AiArchitecture({ hideHeader = false }) {
           <p className="text-[11px] text-slate-400 font-mono">No model trained yet. Upload a CSV (≥ 200 rows, one row per applicant) to train the first version.</p>
         )}
       </div>
-      </>)}
+
+      {/* SECTION 5: GST Model Training History (separate corpus + registry, read-only here) */}
+      <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-5 shadow-xs">
+        <div className="border-b border-slate-200 pb-3">
+          <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">Training Corpus &amp; Model Registry</span>
+          <h2 className="text-base font-extrabold text-slate-800">GST Model Training History</h2>
+          <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+            Every GST upload (Model Testing / Model Hub) accumulates into the corpus · every train saves a new version · old versions kept
+            {gstActive != null ? ` · active: v${gstActive}` : ''}
+          </p>
+        </div>
+
+        {gstRegistry.length > 0 ? (
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Version</th><th className="py-2.5 px-3">Algorithm</th>
+                  <th className="py-2.5 px-3 text-right">Rows</th><th className="py-2.5 px-3 text-right">Score R²</th>
+                  <th className="py-2.5 px-3 text-right">Flag Accuracy</th>
+                  <th className="py-2.5 px-3">Trained</th><th className="py-2.5 px-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {gstRegistry.map((v) => (
+                  <tr key={v.version} className={v.active ? 'bg-emerald-50/50' : 'hover:bg-slate-50/30'}>
+                    <td className="py-2 px-3 font-bold text-slate-800">v{v.version}{v.active && <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded">ACTIVE</span>}</td>
+                    <td className="py-2 px-3 text-slate-600">{v.algorithm}</td>
+                    <td className="py-2 px-3 text-right">{v.nSamples?.toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-bold text-emerald-700">{v.metrics?.scoreR2?.toFixed(3) ?? '—'}</td>
+                    <td className="py-2 px-3 text-right">{v.metrics?.flagAccuracy != null ? `${(v.metrics.flagAccuracy * 100).toFixed(1)}%` : '—'}</td>
+                    <td className="py-2 px-3 text-slate-400">{v.trainedAt?.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="py-2 px-3">
+                      {!v.active && (
+                        <button onClick={() => activateGstVersion(v.version)}
+                          className="text-[10px] font-bold text-purple-700 hover:underline">Activate</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-400 font-mono">No GST model trained yet.</p>
+        )}
+      </div>
+
+      {/* SECTION 6: BBPS Model Training History (separate corpus + registry, read-only here) */}
+      <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-5 shadow-xs">
+        <div className="border-b border-slate-200 pb-3">
+          <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">Training Corpus &amp; Model Registry</span>
+          <h2 className="text-base font-extrabold text-slate-800">BBPS Model Training History</h2>
+          <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+            Every BBPS statement upload accumulates into the corpus · every train saves a new version · old versions kept
+            {bbpsActive != null ? ` · active: v${bbpsActive}` : ''}
+          </p>
+        </div>
+
+        {bbpsRegistry.length > 0 ? (
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Version</th><th className="py-2.5 px-3">Algorithm</th>
+                  <th className="py-2.5 px-3 text-right">Rows</th><th className="py-2.5 px-3 text-right">Score R²</th>
+                  <th className="py-2.5 px-3 text-right">Flag Accuracy</th>
+                  <th className="py-2.5 px-3">Trained</th><th className="py-2.5 px-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {bbpsRegistry.map((v) => (
+                  <tr key={v.version} className={v.active ? 'bg-emerald-50/50' : 'hover:bg-slate-50/30'}>
+                    <td className="py-2 px-3 font-bold text-slate-800">v{v.version}{v.active && <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded">ACTIVE</span>}</td>
+                    <td className="py-2 px-3 text-slate-600">{v.algorithm}</td>
+                    <td className="py-2 px-3 text-right">{v.nSamples?.toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-bold text-emerald-700">{v.metrics?.scoreR2?.toFixed(3) ?? '—'}</td>
+                    <td className="py-2 px-3 text-right">{v.metrics?.flagAccuracy != null ? `${(v.metrics.flagAccuracy * 100).toFixed(1)}%` : '—'}</td>
+                    <td className="py-2 px-3 text-slate-400">{v.trainedAt?.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="py-2 px-3">
+                      {!v.active && (
+                        <button onClick={() => activateBbpsVersion(v.version)}
+                          className="text-[10px] font-bold text-purple-700 hover:underline">Activate</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-400 font-mono">No BBPS model trained yet.</p>
+        )}
+      </div>
 
     </div>
   );

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Search, ToggleLeft, ToggleRight, RotateCcw, Loader2, Info } from 'lucide-react';
+import { Search, ToggleLeft, ToggleRight, RotateCcw, Loader2, Info, Pencil, Plus, X } from 'lucide-react';
 import { api } from '../api/client';
 
 // Rule checklist for one (loan product × data source) pair. Catalogue is the
@@ -10,6 +10,9 @@ export default function ProductSourceRuleChecklist({ productId, sourceId }) {
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState('');
   const [openInfo, setOpenInfo] = useState(() => new Set()); // rule ids showing their explanation
+  const [editing, setEditing] = useState(null); // rule being edited via the pencil icon, or null
+  const [adding, setAdding] = useState(false); // "+ Signal" modal open?
+  const [saving, setSaving] = useState(false);
 
   const base = `/bre-products/${productId}/sources/${sourceId}/rules`;
 
@@ -47,6 +50,31 @@ export default function ProductSourceRuleChecklist({ productId, sourceId }) {
       return next;
     });
 
+  const saveEdit = async ({ label, threshold, description }) => {
+    setSaving(true);
+    try {
+      await api.put(`${base}/${editing.id}`, { label, threshold, description });
+      setData((p) => (p ? {
+        ...p,
+        rules: p.rules.map((r) => (r.id === editing.id ? { ...r, label, threshold, description } : r)),
+      } : p));
+      setEditing(null);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveNewRule = async ({ label, threshold, description }) => {
+    setSaving(true);
+    try {
+      const d = await api.post(base, { label, threshold, description });
+      setData(d);
+      setAdding(false);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const visible = useMemo(
     () => rules
       .map((r, i) => ({ ...r, n: i + 1 }))
@@ -81,6 +109,13 @@ export default function ProductSourceRuleChecklist({ productId, sourceId }) {
           <span className="text-slate-400 font-semibold"> · {rules.length - activeCount} off</span>
         </span>
         <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => setAdding(true)}
+            className={`${btn} btn-orange text-white shadow-md shadow-orange-900/15`}
+          >
+            <Plus className="w-3.5 h-3.5" /> Signal
+          </button>
           {(() => {
             const allOn = rules.length > 0 && activeCount === rules.length;
             return (
@@ -126,8 +161,22 @@ export default function ProductSourceRuleChecklist({ productId, sourceId }) {
                   <span className={`text-xs font-semibold truncate ${on ? 'text-slate-800' : 'text-slate-400 line-through'}`}>
                     {r.label}
                   </span>
+                  {r.threshold && (
+                    <span className="text-[10px] font-mono font-bold text-purple-700 bg-purple-50 border border-purple-200 rounded-md px-1.5 py-0.5 whitespace-nowrap shrink-0">
+                      {r.threshold}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    aria-label={`Edit “${r.label}”`}
+                    title="Edit rule / threshold"
+                    onClick={() => setEditing(r)}
+                    className="grid place-items-center w-6 h-6 rounded-md border border-slate-200 text-slate-400 hover:text-orange-600 hover:border-orange-200 transition-colors cursor-pointer"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
                   {r.description && (
                     <button
                       type="button"
@@ -170,6 +219,82 @@ export default function ProductSourceRuleChecklist({ productId, sourceId }) {
         {visible.length === 0 && (
           <div className="px-3 py-6 text-center text-xs text-slate-400">No rules match “{query}”.</div>
         )}
+      </div>
+
+      {editing && (
+        <RuleFormModal
+          title="Edit Rule"
+          initial={editing}
+          saving={saving}
+          onCancel={() => setEditing(null)}
+          onSave={saveEdit}
+        />
+      )}
+      {adding && (
+        <RuleFormModal
+          title="Add Signal"
+          initial={null}
+          saving={saving}
+          onCancel={() => setAdding(false)}
+          onSave={saveNewRule}
+        />
+      )}
+    </div>
+  );
+}
+
+// Shared form for editing an existing rule (pencil icon) or adding a brand-new
+// custom rule ("+ Signal") — same fields either way: name, threshold, explanation.
+function RuleFormModal({ title, initial, saving, onCancel, onSave }) {
+  const [label, setLabel] = useState(initial?.label || '');
+  const [threshold, setThreshold] = useState(initial?.threshold || '');
+  const [description, setDescription] = useState(initial?.description || '');
+  const canSave = label.trim().length > 0 && !saving;
+
+  const inputCls = 'w-full bg-slate-50/40 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-medium text-slate-800 focus:outline-none focus:border-[#ea580c]';
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-fadeIn">
+      <div className="bg-white border border-slate-200 rounded-3xl max-w-md w-full p-6 shadow-2xl animate-fadeIn">
+        <div className="flex items-start justify-between mb-4">
+          <h3 className="text-base font-bold text-slate-900">{title}</h3>
+          <button
+            type="button"
+            onClick={onCancel}
+            className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-50 transition-colors cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        <div className="space-y-3.5">
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1">Rule Name</label>
+            <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="e.g. Minimum Monthly Credit Rule" className={inputCls} autoFocus />
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1">Threshold</label>
+            <input type="text" value={threshold} onChange={(e) => setThreshold(e.target.value)} placeholder="e.g. ≥ ₹15,000" className={inputCls} />
+          </div>
+          <div>
+            <label className="block text-[11px] font-bold text-slate-500 mb-1">Explanation (optional)</label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What does this rule check?" rows={3} className={`${inputCls} resize-none`} />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2 mt-5">
+          <button type="button" onClick={onCancel} className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 border border-slate-200 hover:bg-slate-50 transition-colors cursor-pointer">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={!canSave}
+            onClick={() => onSave({ label: label.trim(), threshold: threshold.trim(), description: description.trim() })}
+            className="px-4 py-2 rounded-xl btn-orange text-white text-xs font-bold shadow-md shadow-orange-900/15 transition-all disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+          >
+            {saving ? 'Saving…' : 'Save'}
+          </button>
+        </div>
       </div>
     </div>
   );

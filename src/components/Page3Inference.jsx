@@ -1,11 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   Upload, RefreshCw, Code, Table,
-  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy, Fingerprint, ShieldAlert, ChevronDown
+  Check, Loader2, Play, UserCheck, Building2, CheckCircle, AlertTriangle, Copy, Fingerprint, ShieldAlert, ChevronDown,
+  ChevronLeft, ChevronRight
 } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import { api } from '../api/client';
 import Select from './Select';
+
+// Statement dates arrive in whatever format the source parser produced
+// (DD/MM/YYYY, DD-MM-YY, YYYY-MM-DD...) — pull a sortable {year, month} out
+// of any of them rather than assuming one shape.
+function txMonthOf(dateStr) {
+  const s = String(dateStr || '').trim();
+  let m = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})/);
+  if (m) {
+    const day = Number(m[1]), mon = Number(m[2]);
+    let year = Number(m[3]);
+    if (year < 100) year += year > 50 ? 1900 : 2000;
+    // Guard against a DD/MM file where the first group is actually > 12 —
+    // still fine, we only need the month; but if month > 12 the fields were
+    // swapped (MM/DD), so recover by using the day slot as month instead.
+    return { year, month: mon >= 1 && mon <= 12 ? mon : Math.min(12, Math.max(1, day)) };
+  }
+  m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m) return { year: Number(m[1]), month: Number(m[2]) };
+  return null;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December'];
 
 // "stmt_07_ARJUN_PATEL_BHATT.pdf" -> "ARJUN PATEL BHATT"
 function cleanStatementLabel(fname) {
@@ -124,6 +148,57 @@ const GST_DECISION_STYLE = {
   'CONDITIONAL APPROVAL': 'bg-amber-100 text-amber-900 border-amber-200',
   'REJECTED': 'bg-rose-100 text-rose-800 border-rose-200',
 };
+
+// ── BBPS — twin of the GST constants above ──────────────────────────────────
+const BBPS_SHORT_NAME = {
+  bbps_utility_payment_risk_model: 'Risk',
+  bbps_payment_discipline_score_model: 'Discipline',
+  bbps_bill_payment_behaviour_model: 'Behaviour',
+  bbps_utility_expense_stability_model: 'Stability',
+};
+
+const BBPS_HEAD_DESC = {
+  bbps_utility_payment_risk_model: 'A Gradient-Boosting classifier that assigns a LOW / MEDIUM / HIGH utility-payment risk band from punctuality, missed payments, account diversity, recurring share and statement tenure combined.',
+  bbps_payment_discipline_score_model: 'A Gradient-Boosting regressor that scores 0–100 payment discipline from on-time ratio and missed-payment count alone — how consistently bills get paid on time.',
+  bbps_bill_payment_behaviour_model: 'A Gradient-Boosting classifier that labels payment cadence REGULAR (recurring, on-schedule) vs IRREGULAR (one-off / sporadic), independent of whether those payments were on time.',
+  bbps_utility_expense_stability_model: 'A Gradient-Boosting regressor that scores 0–100 utility-footprint stability from account diversity and statement tenure — how established the applicant’s utility relationships are.',
+};
+
+// Headline metric (big number + badge) for the currently-focused BBPS head.
+function bbpsHeadline(modelId, heads) {
+  const risk = heads.bbps_utility_payment_risk_model?.label;
+  const disc = heads.bbps_payment_discipline_score_model?.value;
+  const behaviour = heads.bbps_bill_payment_behaviour_model?.label;
+  const stab = heads.bbps_utility_expense_stability_model?.value;
+  const riskBadge = { text: risk || '—', tone: risk || 'MEDIUM' };
+  const scoreBadge = (v) => ({
+    text: v == null ? '—' : v >= 75 ? 'Strong' : v >= 50 ? 'Adequate' : 'Weak',
+    tone: v == null ? 'MEDIUM' : v >= 75 ? 'LOW' : v >= 50 ? 'MEDIUM' : 'HIGH',
+  });
+  switch (modelId) {
+    case 'bbps_payment_discipline_score_model':
+      return { big: disc == null ? '—' : disc.toFixed(1), unit: 'payment discipline / 100', badge: scoreBadge(disc),
+        line: `Risk ${risk || '—'} · behaviour ${behaviour || '—'}` };
+    case 'bbps_bill_payment_behaviour_model':
+      return { big: behaviour || '—', unit: 'bill payment cadence', badge: { text: behaviour || '—', tone: behaviour === 'REGULAR' ? 'LOW' : 'MEDIUM' },
+        line: `Discipline ${disc?.toFixed?.(1) ?? '—'} / 100` };
+    case 'bbps_utility_expense_stability_model':
+      return { big: stab == null ? '—' : stab.toFixed(1), unit: 'utility expense stability / 100', badge: scoreBadge(stab),
+        line: `Risk ${risk || '—'} · discipline ${disc?.toFixed?.(1) ?? '—'}` };
+    default:
+      return { big: risk || '—', unit: 'utility payment risk band', badge: riskBadge,
+        line: `Discipline ${disc?.toFixed?.(1) ?? '—'} · stability ${stab?.toFixed?.(1) ?? '—'} · ${behaviour || '—'}` };
+  }
+}
+
+const BBPS_SUB_TABS = [
+  { id: 'output', label: 'Model Output' },
+  { id: 'metrics', label: 'Utility Breakdown' },
+  { id: 'factors', label: 'Top Factors' },
+  { id: 'pattern_match', label: 'Anomaly & Fraud' },
+  { id: 'rules', label: 'Signal Result' },
+  { id: 'bre', label: 'BRE payload' },
+];
 const RULE_PILL = (s) => s === 'PASS'
   ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
   : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
@@ -626,6 +701,355 @@ function GstTestResults({
   );
 }
 
+// ── BBPS results — twin of GstTestResults, adapted for a single-applicant
+// utility-payment profile (no multi-business list, no time-series turnover
+// chart — a per-utility spend mix bar instead). ─────────────────────────────
+function BbpsTestResults({
+  bundle, isLoading, activeModelId, modelName, fileName, customId, onReprocess,
+  headModels = [], onSelectModel, tab = 'output', onSelectTab, bre, breLoading,
+  patternMatch, patternLoading, copiedPayload, onCopyPayload,
+}) {
+  if (isLoading && !bundle) {
+    return (
+      <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Scoring BBPS profile…
+      </div>
+    );
+  }
+  if (!bundle) return null;
+  if (!bundle.available) {
+    return (
+      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
+        {bundle.message || 'Upload a BBPS file on this page to score it.'}
+      </div>
+    );
+  }
+
+  const analysis = bundle.analysis || {};
+  const prediction = bundle.prediction || {};
+  const heads = prediction.headScores || {};
+  const label = (customId || '').trim() || cleanStatementLabel(fileName) || 'BBPS Profile';
+  const head = bbpsHeadline(activeModelId, heads);
+  const byType = analysis.byType || [];
+
+  return (
+    <div className="space-y-5">
+      {/* Statement-style header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+        <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+          <h2 className="text-xl font-extrabold text-slate-800">BBPS Profile — {label}</h2>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-extrabold font-mono text-purple-900">
+            {isLoading ? 'SCORING' : 'SCORED'}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md border bg-emerald-100 border-emerald-200 text-emerald-800 text-[10px] font-extrabold font-mono">
+            YOUR UPLOADED DATA
+          </span>
+          <span className="text-xs text-slate-500 font-semibold">
+            {analysis.utilityAccounts} utility account{analysis.utilityAccounts === 1 ? '' : 's'} · {analysis.paymentsLast12m} payment(s) · {analysis.spanMonths} month(s) of history
+          </span>
+        </div>
+        {onReprocess && (
+          <button
+            type="button"
+            onClick={onReprocess}
+            className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+          >
+            Reprocess process
+          </button>
+        )}
+      </div>
+
+      {/* Tab bar — the 4 BBPS models + sub-views */}
+      <div className="border-b border-slate-200 flex space-x-5 overflow-x-auto">
+        {headModels.map((m) => {
+          const isActive = tab === 'output' && activeModelId === m.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => { onSelectModel?.(m.id); onSelectTab?.('output'); }}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {BBPS_SHORT_NAME[m.id] || shortModelName(m.name)} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+        <span className="w-px bg-slate-200 my-1 shrink-0" aria-hidden />
+        {BBPS_SUB_TABS.filter((t) => t.id !== 'output').map((t) => {
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onSelectTab?.(t.id)}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {t.label}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ─────────── SIGNAL RESULT TAB ─────────── */}
+      {tab === 'rules' && (
+        <div className="space-y-4 animate-fadeIn">
+          {breLoading && (
+            <div className="py-10 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
+              <Loader2 className="w-4 h-4 animate-spin" /> Evaluating BBPS rules…
+            </div>
+          )}
+
+          {!breLoading && bre && bre.available === false && (
+            <div className="border border-amber-200 rounded-2xl p-5 bg-amber-50 text-amber-900 text-xs font-semibold">
+              {bre.message}
+            </div>
+          )}
+
+          {!breLoading && bre?.evaluation && (
+            <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+                <div>
+                  <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
+                    BBPS BRE Rule Evaluation
+                  </span>
+                  <h2 className="text-lg font-bold text-slate-800">Signals Decision</h2>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Stability score {bre.evaluation.creditScore} · gate ≥ {bre.evaluation.gateThreshold}
+                  </p>
+                </div>
+                <span className={`px-4 py-2 rounded-xl border text-sm font-extrabold ${GST_DECISION_STYLE[bre.evaluation.decision] || 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                  {bre.evaluation.decision}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  ['PASSED', bre.evaluation.passed, 'text-emerald-700'],
+                  ['FAILED', bre.evaluation.failed, 'text-rose-700'],
+                  ['NOT EVALUATED', bre.evaluation.skipped, 'text-slate-400'],
+                  ['RULES ENABLED', bre.evaluation.enabledCount, 'text-slate-800'],
+                ].map(([lbl, val, color]) => (
+                  <div key={lbl} className="p-3 rounded-xl bg-slate-50/60 border border-slate-200">
+                    <div className="text-[9px] font-mono font-bold text-slate-400 uppercase">{lbl}</div>
+                    <div className={`text-xl font-extrabold font-mono ${color}`}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {bre.evaluation.seriousFlags?.length > 0 && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-2.5">
+                  <div className="text-[10px] font-bold text-rose-800 uppercase flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Serious flags driving the decision
+                  </div>
+                  <div className="text-xs text-rose-800 font-medium">{bre.evaluation.seriousFlags.join(' · ')}</div>
+                </div>
+              )}
+
+              <PaginatedRuleList results={bre.evaluation.results} product="BBPS utility-payment signal" decision={bre.evaluation.decision} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'pattern_match' && (
+        <PatternMatchView data={patternMatch} loading={patternLoading} />
+      )}
+
+      {/* ─────────── BRE PAYLOAD TAB (raw JSON) ─────────── */}
+      {tab === 'bre' && (
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Code className="w-4 h-4 text-purple-700" /> BRE Output Payload (JSON)
+            </h2>
+            <button
+              type="button"
+              onClick={() => onCopyPayload?.(bre?.payload)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                copiedPayload ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {copiedPayload ? <><Check className="w-3.5 h-3.5" />Copied</> : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
+            </button>
+          </div>
+          <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
+            {bre?.payload ? JSON.stringify(bre.payload, null, 2) : (breLoading ? 'Evaluating…' : 'No payload yet.')}
+          </pre>
+        </div>
+      )}
+
+      {/* ─────────── TOP FACTORS TAB ─────────── */}
+      {tab === 'factors' && (
+        <div className="space-y-3 animate-fadeIn">
+          <p className="text-[11px] text-slate-500">
+            Per model — the inputs each BBPS head weights most, ranked by importance × distance from the training-corpus
+            average (σ).
+          </p>
+          {[
+            'bbps_utility_payment_risk_model', 'bbps_payment_discipline_score_model',
+            'bbps_bill_payment_behaviour_model', 'bbps_utility_expense_stability_model',
+          ].filter((id) => heads[id]).map((id) => {
+            const hf = heads[id]?.topFactors || [];
+            return (
+              <div key={id} className={`border rounded-2xl p-4 bg-white shadow-sm space-y-2.5 ${id === activeModelId ? 'border-[#ea580c] ring-1 ring-orange-200' : 'border-slate-200'}`}>
+                <h3 className="text-xs font-bold text-slate-800">{heads[id].name}</h3>
+                {hf.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {hf.slice(0, 6).map((f, i) => (
+                      <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <span className="text-slate-700 truncate">{f.feature}</span>
+                        <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                          {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">No standout factors for this profile.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─────────── UTILITY BREAKDOWN TAB (twin of GST Metrics) ─────────── */}
+      {tab === 'metrics' && (
+        <div className="space-y-4 animate-fadeIn">
+          <div className="border border-slate-200 rounded-2xl p-5 bg-white shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Table className="w-4 h-4 text-purple-700" /> Per-Utility Breakdown
+            </h3>
+            {byType.length > 0 ? (
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                    <tr>
+                      <th className="py-2.5 px-3">Utility Type</th>
+                      <th className="py-2.5 px-3 text-right">Payments</th>
+                      <th className="py-2.5 px-3 text-right">Months Paid</th>
+                      <th className="py-2.5 px-3 text-right">Missed</th>
+                      <th className="py-2.5 px-3 text-right">Avg Bill</th>
+                      <th className="py-2.5 px-3 text-right">Total Paid</th>
+                      <th className="py-2.5 px-3">Recurring</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-purple-100 bg-white">
+                    {byType.map((t) => (
+                      <tr key={t.utilityType} className="hover:bg-slate-50/30 text-slate-800">
+                        <td className="py-2 px-3 font-bold text-slate-800">{t.utilityType.replace('_', ' / ')}</td>
+                        <td className="py-2 px-3 text-right">{t.paymentCount}</td>
+                        <td className="py-2 px-3 text-right">{t.monthsPaid}</td>
+                        <td className="py-2 px-3 text-right">
+                          <span className={t.missedMonths > 0 ? 'text-rose-600 font-bold' : ''}>{t.missedMonths}</span>
+                        </td>
+                        <td className="py-2 px-3 text-right">{inrShort(t.averageBillAmount)}</td>
+                        <td className="py-2 px-3 text-right">{inrShort(t.totalPaid)}</td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${t.recurring ? 'bg-emerald-100 border-emerald-200 text-emerald-800' : 'bg-slate-100 border-slate-200 text-slate-500'}`}>
+                            {t.recurring ? 'Recurring' : 'One-off'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">No utility-type breakdown for this statement.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ─────────── MODEL OUTPUT TAB ─────────── */}
+      {tab === 'output' && (<>
+      {(() => {
+        const hm = heads[activeModelId] || {};
+        const desc = hm.desc || BBPS_HEAD_DESC[activeModelId];
+        const hf = hm.topFactors || [];
+        return (
+      <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-5 shadow-sm animate-fadeIn">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-3 gap-4">
+          <div className="min-w-0">
+            <span className="text-[10px] font-mono uppercase text-purple-600 font-bold block">MODEL OUTPUT RESULT</span>
+            <h2 className="text-lg font-bold text-slate-800">{modelName || 'BBPS Utility Payment'} Output</h2>
+            {desc && <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed max-w-xl">{desc}</p>}
+          </div>
+          <div className="text-right shrink-0">
+            <span className={`px-3 py-1 rounded-lg text-xs font-bold font-mono inline-block shadow-sm ${BADGE_TONE[head.badge.tone] || BADGE_TONE.MEDIUM}`}>
+              {head.badge.text}
+            </span>
+            <div className="text-xs font-mono font-bold text-purple-900 mt-1">{head.line}</div>
+          </div>
+        </div>
+
+        {/* big headline number */}
+        <div className="flex items-end gap-3">
+          <div className="text-4xl font-extrabold text-slate-900 font-mono leading-none">{head.big}</div>
+          <div className="text-[11px] text-slate-400 pb-1">{head.unit}</div>
+          <div className="ml-auto text-[11px] font-mono text-slate-500 text-right">GRADIENT BOOSTING</div>
+        </div>
+
+        {/* what moved this specific result — per-head drivers */}
+        {hf.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 space-y-2">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+              What moved this result — the inputs {(modelName || '').replace(' Model', '')} weights most, furthest from the corpus average
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {hf.slice(0, 6).map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <span className="text-slate-600 truncate">{f.feature}</span>
+                  <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                    {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* utility spend mix — bar breakdown; there's no time-series for one statement */}
+        <div>
+          <h3 className="text-xs font-bold text-slate-700 mb-3">Utility Spend Mix</h3>
+          {byType.length > 0 ? (
+            <div className="space-y-2 bg-slate-50/40 border border-slate-200 rounded-xl p-4">
+              {(() => {
+                const total = byType.reduce((s, t) => s + (t.totalPaid || 0), 0) || 1;
+                return byType.map((t) => (
+                  <div key={t.utilityType} className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="text-slate-700 font-bold">{t.utilityType.replace('_', ' / ')}</span>
+                      <span className="text-slate-500">{inrShort(t.totalPaid)} · {((t.totalPaid / total) * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                      <div className="h-full bg-purple-600 rounded-full" style={{ width: `${Math.max(2, (t.totalPaid / total) * 100)}%` }} />
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          ) : (
+            <div className="h-24 flex items-center justify-center text-[11px] text-slate-400 bg-slate-50/40 border border-slate-200 rounded-xl">
+              No utility-type spend to plot.
+            </div>
+          )}
+        </div>
+      </div>
+        );
+      })()}
+      </>)}
+    </div>
+  );
+}
+
 // ── Pattern Match — written for a non-technical reviewer ────────────────────
 // Everything here is a plain sentence + one clear icon. No jargon, no bare
 // numbers, no dot strips. The verdict is a traffic light; the two questions are
@@ -652,7 +1076,7 @@ const ZONE_UI = {
   concern: {
     card: 'border-rose-300 bg-rose-50', accent: 'text-rose-800', Icon: ShieldAlert,
     title: 'Send this for a fraud review',
-    sub: 'This account matches a known fraud pattern. Don’t approve it without a manual check.',
+    sub: 'Don’t approve it without a manual check — see the specific reason below.',
   },
 };
 
@@ -714,13 +1138,18 @@ function PatternMatchView({ data, loading }) {
         <Fingerprint className="w-4 h-4 text-purple-700" /> Fraud Check
       </h2>
 
-      {/* 1 — the bottom line, in one sentence */}
+      {/* 1 — the bottom line, in one sentence, plus the actual reason it fired */}
       <div className={`rounded-2xl border-2 p-5 ${zone.card}`}>
         <div className={`flex items-center gap-2.5 ${zone.accent}`}>
           <zone.Icon className="w-7 h-7 shrink-0" strokeWidth={2.2} />
           <span className="text-xl font-extrabold leading-tight">{zone.title}</span>
         </div>
         <p className="mt-2 text-[13px] text-slate-700 leading-relaxed">{zone.sub}</p>
+        {data.zoneReason?.line && (
+          <p className="mt-2 text-[13px] text-slate-800 leading-relaxed">
+            <span className="font-bold">Why: </span>{data.zoneReason.line}
+          </p>
+        )}
       </div>
 
       {/* 2 — the two questions a reviewer actually asks */}
@@ -920,22 +1349,32 @@ export default function Page3Inference({
   const modelsList = trainedModels && trainedModels.length > 0 ? trainedModels : allModels;
 
   const [allSources, setAllSources] = useState([]);
-  const [gstReg, setGstReg] = useState(null);      // GST registry: { versions, active, deployed, heads }
+  const [gstReg, setGstReg] = useState(null);       // GST registry: { versions, active, deployed, heads }
   const [gstBundle, setGstBundle] = useState(null); // GST score-testing result
+  const [bbpsReg, setBbpsReg] = useState(null);       // BBPS registry: { versions, active, deployed, heads }
+  const [bbpsBundle, setBbpsBundle] = useState(null); // BBPS score-testing result
 
   // Deployed GST heads (from the GST registry) sit alongside the deployed bank models.
   const gstDeployedModels = (gstReg?.versions?.length ? gstReg.heads || [] : [])
     .filter(h => gstReg?.deployed?.[h.id] ?? true)
     .map(h => ({ id: h.id, name: h.name, kind: 'gst' }));
+  const bbpsDeployedModels = (bbpsReg?.versions?.length ? bbpsReg.heads || [] : [])
+    .filter(h => bbpsReg?.deployed?.[h.id] ?? true)
+    .map(h => ({ id: h.id, name: h.name, kind: 'bbps' }));
   const deployedModels = [
-    ...modelsList.filter(m => m.kind !== 'gst' && deployedStatusMap[m.id] === "Deployed"),
+    ...modelsList.filter(m => m.kind !== 'gst' && m.kind !== 'bbps' && deployedStatusMap[m.id] === "Deployed"),
     ...gstDeployedModels,
+    ...bbpsDeployedModels,
   ];
   // The model list is scoped to the selected input data source AND to what is
   // currently deployed. All four bank models ship deployed, so a fresh session
   // shows all four; Revoking one in the Model Hub registry drops it from here.
   const modelsForSource = (srcId) =>
-    deployedModels.filter(m => (srcId === 'gst_data' ? m.kind === 'gst' : m.kind !== 'gst'));
+    deployedModels.filter(m => (
+      srcId === 'gst_data' ? m.kind === 'gst'
+      : srcId === 'bbps_utility' ? m.kind === 'bbps'
+      : m.kind !== 'gst' && m.kind !== 'bbps'
+    ));
   // Multi-select: which deployed models are in scope (default = all of them).
   const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
   // Which one's results are currently shown.
@@ -950,6 +1389,9 @@ export default function Page3Inference({
   const [gstTab, setGstTab] = useState('output');       // GST result sub-tab
   const [gstBre, setGstBre] = useState(null);           // GST BRE eval result
   const [gstBreLoading, setGstBreLoading] = useState(false);
+  const [bbpsTab, setBbpsTab] = useState('output');       // BBPS result sub-tab
+  const [bbpsBre, setBbpsBre] = useState(null);           // BBPS BRE eval result
+  const [bbpsBreLoading, setBbpsBreLoading] = useState(false);
   const [bundle, setBundle] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -982,9 +1424,18 @@ export default function Page3Inference({
         setGstBundle(saved);
         setGstTab('output');
         setBundle(null);
+        setBbpsBundle(null);
+      } else if (saved && saved._kind === 'bbps') {
+        setSelectedInputSourceId('bbps_utility');
+        setSelectedModelId('bbps_utility_payment_risk_model');
+        setBbpsBundle(saved);
+        setBbpsTab('output');
+        setBundle(null);
+        setGstBundle(null);
       } else {
         setBundle(saved);
         setGstBundle(null);
+        setBbpsBundle(null);
       }
       setHasTested(true);
       setViewingHistory({ id: row.rowId, label: row.id });
@@ -999,6 +1450,7 @@ export default function Page3Inference({
     setHasTested(false);
     setBundle(null);
     setGstBundle(null);
+    setBbpsBundle(null);
     setLoadError('');
     loadHistory();
   };
@@ -1006,6 +1458,7 @@ export default function Page3Inference({
   useEffect(() => {
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
     api.get('/gst/model/registry').then(setGstReg).catch(() => {});
+    api.get('/bbps/model/registry').then(setBbpsReg).catch(() => {});
     loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1019,6 +1472,9 @@ export default function Page3Inference({
       : [{ value: 'account_aggregator', label: 'Account Aggregator (AA) — Bank Statement' }];
     if (gstDeployedModels.length && !base.some(o => o.value === 'gst_data')) {
       base.push({ value: 'gst_data', label: 'GST Data — GSTR-1 / 3B / 2A / 2B' });
+    }
+    if (bbpsDeployedModels.length && !base.some(o => o.value === 'bbps_utility')) {
+      base.push({ value: 'bbps_utility', label: 'BBPS Utility Payment History' });
     }
     return base;
   })();
@@ -1059,8 +1515,11 @@ export default function Page3Inference({
     || modelsList.find(m => m.id === activeModelId)
     || { name: "Risk Model" };
   const isGstActive = activeModelObj?.kind === 'gst';
+  const isBbpsActive = activeModelObj?.kind === 'bbps';
   const activeVersion = isGstActive
     ? (gstReg?.active ? `v${gstReg.active}` : '')
+    : isBbpsActive
+    ? (bbpsReg?.active ? `v${bbpsReg.active}` : '')
     : (selectedVersionMap[activeModelId] || "v3.4");
 
   // `record` = deliberate run (upload / Run Analysis). On those, we log a history
@@ -1079,11 +1538,35 @@ export default function Page3Inference({
         setGstBre(null);
         setPatternMatch(null);
         setBundle(null);
+        setBbpsBundle(null);
         setHasTested(true);
         setViewingHistory(null);
         if (!g.available) setLoadError(g.message || 'No GST file uploaded on this page yet.');
         else if (record) {
           api.post('/gst/record-test', { customId, fileName: inputFileName }).then(loadHistory).catch(() => {});
+        }
+      } catch (err) {
+        setLoadError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // BBPS heads share one scoring call against the BBPS file uploaded on this page.
+    if (deployedModels.find(m => m.id === modelId)?.kind === 'bbps') {
+      try {
+        const b = await api.get('/bbps/score-testing');
+        setBbpsBundle(b);
+        setBbpsBre(null);
+        setPatternMatch(null);
+        setBundle(null);
+        setGstBundle(null);
+        setHasTested(true);
+        setViewingHistory(null);
+        if (!b.available) setLoadError(b.message || 'No BBPS file uploaded on this page yet.');
+        else if (record) {
+          api.post('/bbps/record-test', { customId, fileName: inputFileName }).then(loadHistory).catch(() => {});
         }
       } catch (err) {
         setLoadError(err.message);
@@ -1105,7 +1588,8 @@ export default function Page3Inference({
       if (record) {
         // background-record the other selected models, then refresh the list
         const gstIds = new Set(gstDeployedModels.map((g) => g.id));
-        const others = chosenModelIds.filter((m) => m !== modelId && !gstIds.has(m));
+        const bbpsIds = new Set(bbpsDeployedModels.map((b) => b.id));
+        const others = chosenModelIds.filter((m) => m !== modelId && !gstIds.has(m) && !bbpsIds.has(m));
         await Promise.allSettled(
           others.map((m) =>
             api.post('/inference/run', { modelId: m, customId, bankName: bank, sourceId, record: true }),
@@ -1131,12 +1615,15 @@ export default function Page3Inference({
     setBundle(null);
     setGstBundle(null);
     setGstBre(null);
+    setBbpsBundle(null);
+    setBbpsBre(null);
     setBreRun(null);
     setPatternMatch(null);
     setInputFileName('');
     setInputUploadInfo('');
     setLoadError('');
     setGstTab('output');
+    setBbpsTab('output');
     setActiveTab('analytics');
   }, [selectedInputSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1150,19 +1637,32 @@ export default function Page3Inference({
       .finally(() => setGstBreLoading(false));
   }, [gstTab, gstBundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Run the anomaly/fraud pattern match when its tab opens (AA + GST).
+  // Evaluate the BBPS BRE rules when the "Rule Result" / "BRE payload" tab opens.
+  useEffect(() => {
+    if ((bbpsTab !== 'rules' && bbpsTab !== 'bre') || !bbpsBundle?.available || bbpsBre || bbpsBreLoading) return;
+    setBbpsBreLoading(true);
+    api.post('/bbps/bre-evaluate')
+      .then(setBbpsBre)
+      .catch((err) => setBbpsBre({ available: false, message: err.message }))
+      .finally(() => setBbpsBreLoading(false));
+  }, [bbpsTab, bbpsBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run the anomaly/fraud pattern match when its tab opens (AA + GST + BBPS).
   useEffect(() => {
     const aaOpen = activeTab === 'pattern_match' && bundle && !patternMatch;
     const gstOpen = gstTab === 'pattern_match' && gstBundle?.available && !patternMatch;
-    if ((!aaOpen && !gstOpen) || patternLoading) return;
+    const bbpsOpen = bbpsTab === 'pattern_match' && bbpsBundle?.available && !patternMatch;
+    if ((!aaOpen && !gstOpen && !bbpsOpen) || patternLoading) return;
     setPatternLoading(true);
     const req = gstOpen
       ? api.get('/gst/pattern-match')
+      : bbpsOpen
+      ? api.get('/bbps/pattern-match')
       : api.post('/inference/patterns', { customId: customId || 'applicant', sourceId: selectedInputSourceId });
     req.then(setPatternMatch)
       .catch((err) => setPatternMatch({ available: false, message: err.message }))
       .finally(() => setPatternLoading(false));
-  }, [activeTab, gstTab, bundle, gstBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, gstTab, bbpsTab, bundle, gstBundle, bbpsBundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-run when the focused model changes — but only once a test has actually
   // been run on this page (never on first load, never while viewing history).
@@ -1211,6 +1711,18 @@ export default function Page3Inference({
         return;
       }
 
+      // BBPS file → the BBPS subsystem parsed & scored it; go straight to BBPS results.
+      const bbps = data?.statement?.bbps || data?.uploadedFiles?.bbps_utility?.[0]?.bbps;
+      if (selectedInputSourceId === 'bbps_utility' || bbps) {
+        setInputUploadInfo(bbps?.available
+          ? `${bbps.utilityAccounts} utility account(s) · ${bbps.paymentsLast12m} payment(s) scored`
+          : 'No BBPS / utility bill payments found in this statement');
+        let bbpsModelId = activeModelObj?.kind === 'bbps' ? activeModelId : bbpsDeployedModels[0]?.id;
+        if (bbpsModelId && bbpsModelId !== activeModelId) { setSelectedModelId(bbpsModelId); }
+        await runInference(bbpsModelId || activeModelId, customId, customBankName, 'bbps_utility', true);
+        return;
+      }
+
       const sum = data?.statement?.summary || {};
       const n = sum.transactionCount ?? (data?.statement?.transactions?.length ?? 0);
       const bank = sum.bankName;
@@ -1251,7 +1763,39 @@ export default function Page3Inference({
     if (bundle && !viewingHistory) handleRunBreRules();
   }, [bundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const transactionsList = bundle?.transactions || [];
+  const transactionsList = useMemo(() => bundle?.transactions || [], [bundle]);
+
+  // Transactions grouped by real calendar month — each page below is one
+  // month, with that month's own total spend (debit) and total earn (credit).
+  const monthGroups = useMemo(() => {
+    const map = new Map();
+    let unknownBucket = null;
+    for (const row of transactionsList) {
+      const m = txMonthOf(row.date);
+      const key = m ? `${m.year}-${String(m.month).padStart(2, '0')}` : 'unknown';
+      let g = map.get(key);
+      if (!g) {
+        g = {
+          key, year: m?.year ?? 0, month: m?.month ?? 0,
+          label: m ? `${MONTH_NAMES[m.month - 1]} ${m.year}` : 'Undated',
+          rows: [], totalCredit: 0, totalDebit: 0,
+        };
+        map.set(key, g);
+        if (!m) unknownBucket = g;
+      }
+      g.rows.push(row);
+      const amt = Number(row.amount) || 0;
+      if (row.type === 'CREDIT') g.totalCredit += amt; else g.totalDebit += amt;
+    }
+    const groups = Array.from(map.values()).filter((g) => g !== unknownBucket);
+    groups.sort((a, b) => (a.year - b.year) || (a.month - b.month));
+    if (unknownBucket) groups.push(unknownBucket); // undated rows last, not interleaved
+    return groups;
+  }, [transactionsList]);
+
+  const [txMonthPage, setTxMonthPage] = useState(0);
+  useEffect(() => { setTxMonthPage(0); }, [bundle]);
+  const currentMonth = monthGroups[Math.min(txMonthPage, monthGroups.length - 1)] || null;
   const anomaliesList = bundle?.anomalies || [];
   const analytics = bundle?.analytics;
   const riskScore = bundle?.riskScore;
@@ -1524,7 +2068,39 @@ export default function Page3Inference({
         />
       )}
 
-      {hasTested && !isGstActive && (
+      {/* ── BBPS results — a BBPS head is the active model ── */}
+      {hasTested && isBbpsActive && (
+        <BbpsTestResults
+          bundle={bbpsBundle}
+          isLoading={isLoading}
+          activeModelId={activeModelId}
+          modelName={activeModelObj?.name}
+          fileName={inputFileName}
+          customId={customId}
+          onReprocess={onReprocessPipeline}
+          headModels={sourceModels.map((m) => ({
+            id: m.id, name: BBPS_SHORT_NAME[m.id] || m.name,
+            version: bbpsReg?.active ? `v${bbpsReg.active}` : '',
+          }))}
+          onSelectModel={(id) => { setSelectedModelId(id); setBbpsTab('output'); }}
+          tab={bbpsTab}
+          onSelectTab={setBbpsTab}
+          bre={bbpsBre}
+          breLoading={bbpsBreLoading}
+          patternMatch={patternMatch}
+          patternLoading={patternLoading}
+          copiedPayload={copiedPayload}
+          onCopyPayload={(payload) => {
+            if (!payload) return;
+            navigator.clipboard?.writeText(JSON.stringify(payload, null, 2)).then(
+              () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
+              () => {},
+            );
+          }}
+        />
+      )}
+
+      {hasTested && !isGstActive && !isBbpsActive && (
       <>
       {/* ── results ── */}
 
@@ -1657,11 +2233,51 @@ export default function Page3Inference({
       {/* TAB 1: TRANSACTIONS */}
       {activeTab === 'transactions' && (
         <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
-          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-3">
             <h2 className="text-base font-bold text-slate-800">
               Transactions ({transactionsList.length})
             </h2>
+            {monthGroups.length > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setTxMonthPage((p) => Math.max(0, p - 1))}
+                  disabled={txMonthPage === 0}
+                  className="grid place-items-center w-7 h-7 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <span className="text-xs font-bold text-slate-700 min-w-36 text-center">
+                  {currentMonth?.label}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTxMonthPage((p) => Math.min(monthGroups.length - 1, p + 1))}
+                  disabled={txMonthPage >= monthGroups.length - 1}
+                  className="grid place-items-center w-7 h-7 rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
+
+          {currentMonth && (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+              <div className="rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-2.5">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-slate-400">{currentMonth.label} · Transactions</div>
+                <div className="text-sm font-extrabold text-slate-800 mt-0.5">{currentMonth.rows.length}</div>
+              </div>
+              <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-rose-500">Total Spend (Debit)</div>
+                <div className="text-sm font-extrabold text-rose-700 mt-0.5">₹{currentMonth.totalDebit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+              </div>
+              <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2.5">
+                <div className="text-[10px] font-bold uppercase tracking-wide text-emerald-600">Total Earn (Credit)</div>
+                <div className="text-sm font-extrabold text-emerald-700 mt-0.5">₹{currentMonth.totalCredit.toLocaleString('en-IN', { maximumFractionDigits: 2 })}</div>
+              </div>
+            </div>
+          )}
 
           <div className="overflow-x-auto border border-slate-200 rounded-xl">
             <table className="w-full text-left text-xs font-mono">
@@ -1674,7 +2290,7 @@ export default function Page3Inference({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-100 bg-white">
-                {transactionsList.map((row, idx) => (
+                {(currentMonth?.rows || []).map((row, idx) => (
                   <tr key={idx} className="hover:bg-slate-50/40 text-slate-800 transition-colors">
                     <td className="py-3 px-4 text-slate-600 font-semibold">{row.date}</td>
                     <td className="py-3 px-4 font-bold text-slate-800">{row.narration}</td>
