@@ -121,6 +121,22 @@ export default function AiArchitecture({ hideHeader = false }) {
     loadBbpsRegistry();
   };
 
+  // ── UPI model training history (separate registry/corpus, same idea) ────
+  const [upiRegistry, setUpiRegistry] = useState([]);
+  const [upiActive, setUpiActive] = useState(null);
+  const loadUpiRegistry = () => {
+    api.get('/upi/model/registry').then((d) => {
+      setUpiRegistry(d.versions || []);
+      setUpiActive(d.active ?? null);
+    }).catch(() => {});
+  };
+  useEffect(() => { loadUpiRegistry(); }, []);
+
+  const activateUpiVersion = async (v) => {
+    await api.put('/upi/model/active', { version: v }).catch(() => {});
+    loadUpiRegistry();
+  };
+
   const trainOnDataset = async (file) => {
     setDatasetTraining(true);
     setDatasetMsg('');
@@ -616,6 +632,53 @@ export default function AiArchitecture({ hideHeader = false }) {
           </div>
         ) : (
           <p className="text-[11px] text-slate-400 font-mono">No BBPS model trained yet.</p>
+        )}
+      </div>
+
+      {/* SECTION 7: UPI Model Training History (separate corpus + registry, read-only here) */}
+      <div className="border border-slate-200 rounded-2xl p-5 sm:p-6 bg-white space-y-5 shadow-xs">
+        <div className="border-b border-slate-200 pb-3">
+          <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">Training Corpus &amp; Model Registry</span>
+          <h2 className="text-base font-extrabold text-slate-800">UPI Model Training History</h2>
+          <p className="text-[10px] text-slate-500 font-mono mt-0.5">
+            Every UPI file upload accumulates into the corpus · every train saves a new version · old versions kept
+            {upiActive != null ? ` · active: v${upiActive}` : ''}
+          </p>
+        </div>
+
+        {upiRegistry.length > 0 ? (
+          <div className="overflow-x-auto border border-slate-200 rounded-xl">
+            <table className="w-full text-left text-xs font-mono">
+              <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                <tr>
+                  <th className="py-2.5 px-3">Version</th><th className="py-2.5 px-3">Algorithm</th>
+                  <th className="py-2.5 px-3 text-right">Rows</th><th className="py-2.5 px-3 text-right">Score R²</th>
+                  <th className="py-2.5 px-3 text-right">Flag Accuracy</th>
+                  <th className="py-2.5 px-3">Trained</th><th className="py-2.5 px-3"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-purple-100 bg-white">
+                {upiRegistry.map((v) => (
+                  <tr key={v.version} className={v.active ? 'bg-emerald-50/50' : 'hover:bg-slate-50/30'}>
+                    <td className="py-2 px-3 font-bold text-slate-800">v{v.version}{v.active && <span className="ml-1.5 text-[9px] bg-emerald-600 text-white px-1.5 py-0.5 rounded">ACTIVE</span>}</td>
+                    <td className="py-2 px-3 text-slate-600">{v.algorithm}</td>
+                    <td className="py-2 px-3 text-right">{v.nSamples?.toLocaleString()}</td>
+                    <td className="py-2 px-3 text-right font-bold text-emerald-700">{v.metrics?.scoreR2?.toFixed(3) ?? '—'}</td>
+                    <td className="py-2 px-3 text-right">{v.metrics?.flagAccuracy != null ? `${(v.metrics.flagAccuracy * 100).toFixed(1)}%` : '—'}</td>
+                    <td className="py-2 px-3 text-slate-400">{v.trainedAt?.slice(0, 16).replace('T', ' ')}</td>
+                    <td className="py-2 px-3">
+                      {!v.active && (
+                        <button onClick={() => activateUpiVersion(v.version)}
+                          className="text-[10px] font-bold text-purple-700 hover:underline">Activate</button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p className="text-[11px] text-slate-400 font-mono">No UPI model trained yet.</p>
         )}
       </div>
 

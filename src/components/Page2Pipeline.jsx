@@ -297,15 +297,16 @@ export default function Page2Pipeline({
   };
 
   // Each domain owns its own evaluation-summary endpoint — no shared backend
-  // dispatcher. Fetch all three and merge client-side into the one shape the
+  // dispatcher. Fetch all four and merge client-side into the one shape the
   // rest of this component already reads (evalSummary.sessionModels /
-  // .gstModels / .bbpsModels, etc.).
+  // .gstModels / .bbpsModels / .upiModels, etc.).
   const loadEvalSummary = () => {
     Promise.all([
       api.get('/models/evaluation/summary').catch(() => null),
       api.get('/gst/evaluation/summary').catch(() => null),
       api.get('/bbps/evaluation/summary').catch(() => null),
-    ]).then(([aa, gst, bbps]) => {
+      api.get('/upi/evaluation/summary').catch(() => null),
+    ]).then(([aa, gst, bbps, upi]) => {
       setEvalSummary({
         sessionModels: aa?.sessionModels || [],
         sessionAlgorithm: aa?.sessionAlgorithm,
@@ -318,6 +319,9 @@ export default function Page2Pipeline({
         bbpsModels: bbps?.models || [],
         bbpsAlgorithm: bbps?.algorithm,
         bbpsTrainedAt: bbps?.trainedAt,
+        upiModels: upi?.models || [],
+        upiAlgorithm: upi?.algorithm,
+        upiTrainedAt: upi?.trainedAt,
       });
     });
   };
@@ -328,25 +332,30 @@ export default function Page2Pipeline({
     const list = readyModelsList.length ? readyModelsList : trainedModels;
     const gst = list.some((m) => m.kind === 'gst');
     const bbps = list.some((m) => m.kind === 'bbps');
-    api.get(gst ? '/gst/patterns' : bbps ? '/bbps/patterns' : '/models/patterns')
+    const upi = list.some((m) => m.kind === 'upi');
+    api.get(gst ? '/gst/patterns' : bbps ? '/bbps/patterns' : upi ? '/upi/patterns' : '/models/patterns')
       .then((d) => setPatterns(d?.available ? d : null))
       .catch(() => setPatterns(null));
   };
   const loadEvaluation = (mid) => {
-    const path = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : '/models/evaluation';
+    const path = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : isUpiRun ? '/upi/evaluation' : '/models/evaluation';
     api.get(path, { model_id: mid }).then((d) => setModelEval(d.evaluation || null)).catch(() => {});
     loadEvalSummary();
   };
   useEffect(() => { loadEvaluation(evalModelId); }, [evalModelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // This session trained the GST (or BBPS) model, not the bank models — the
-  // eval panel (and everything else) should then show ONLY that family's heads.
+  // This session trained the GST (or BBPS, or UPI) model, not the bank
+  // models — the eval panel (and everything else) should then show ONLY
+  // that family's heads.
   const isGstRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'gst');
   const isBbpsRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'bbps');
+  const isUpiRun = (readyModelsList.length ? readyModelsList : trainedModels).some((m) => m?.kind === 'upi');
   const evalModelsForRun = isGstRun
     ? (evalSummary?.gstModels || [])
     : isBbpsRun
     ? (evalSummary?.bbpsModels || [])
+    : isUpiRun
+    ? (evalSummary?.upiModels || [])
     : (evalSummary?.sessionModels || []);
 
   // Focus the first model of whichever family this session trained.
@@ -359,7 +368,7 @@ export default function Page2Pipeline({
   const reEvaluate = async () => {
     setReEvaluating(true);
     try {
-      const base = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : '/models/evaluation';
+      const base = isGstRun ? '/gst/evaluation' : isBbpsRun ? '/bbps/evaluation' : isUpiRun ? '/upi/evaluation' : '/models/evaluation';
       const d = await api.post(`${base}/${evalModelId}/re-run`);
       setModelEval(d.evaluation || null);
       loadEvalSummary();
@@ -662,8 +671,9 @@ export default function Page2Pipeline({
     setGstFeatures(null);
 
     // Each data source trains on its OWN endpoint — GST -> /gst/train, BBPS
-    // -> /bbps/train, everything else -> /models/train (AA bank models).
-    // No shared dispatcher: the source decides where this goes, not the backend.
+    // -> /bbps/train, UPI -> /upi/train, everything else -> /models/train
+    // (AA bank models). No shared dispatcher: the source decides where this
+    // goes, not the backend.
     const srcId = activeUpload ? activeUpload.id : null;
     let data;
     try {
@@ -673,6 +683,8 @@ export default function Page2Pipeline({
         data = await api.postForm('/gst/train', form);
       } else if (srcId === 'bbps_utility') {
         data = await api.post('/bbps/train', { algorithm: selectedMLAlgorithm });
+      } else if (srcId === 'upi_enrichment') {
+        data = await api.post('/upi/train', { algorithm: selectedMLAlgorithm });
       } else {
         data = await api.post('/models/train', {
           algorithm: selectedMLAlgorithm,
@@ -1043,6 +1055,61 @@ export default function Page2Pipeline({
                           ) : (
                             <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
                               {f.bbps.message}
+                            </p>
+                          )
+                        )}
+
+                        {f.upi && (
+                          f.upi.available ? (
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <StatTile label="Transactions" value={f.upi.totalTransactions} />
+                              <StatTile
+                                label="Success Rate"
+                                tone="text-purple-700"
+                                value={`${((f.upi.successRatio || 0) * 100).toFixed(0)}%`}
+                              />
+                              <StatTile label="Unique Payees" value={f.upi.uniquePayees} />
+                              <StatTile label="Unique Payers" value={f.upi.uniquePayers} />
+                              <div className="col-span-2 flex flex-wrap gap-1">
+                                {(f.upi.byMcc || []).slice(0, 5).map((t) => (
+                                  <span key={t.mcc} className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-purple-50 text-purple-700 border-purple-200">
+                                    {t.label} · ₹{t.totalAmount.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                  </span>
+                                ))}
+                              </div>
+
+                              {f.upi.model?.available && (
+                                <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2 flex items-center justify-between">
+                                  <div>
+                                    <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">UPI Model · Stability Score</div>
+                                    <div className="text-sm font-extrabold text-purple-700">{f.upi.model.stabilityScore}</div>
+                                  </div>
+                                  <span className={`text-[10px] font-extrabold px-2 py-1 rounded-md border ${
+                                    f.upi.model.riskFlag === 'LOW' ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                      : f.upi.model.riskFlag === 'MEDIUM' ? 'bg-amber-50 text-amber-700 border-amber-200'
+                                      : 'bg-rose-50 text-rose-700 border-rose-200'
+                                  }`}>{f.upi.model.riskFlag} RISK</span>
+                                </div>
+                              )}
+
+                              {f.upi.rules && (
+                                <div className="col-span-2 rounded-lg border border-slate-200 bg-slate-50/50 px-3 py-2">
+                                  <div className="text-[9px] font-semibold uppercase tracking-wide text-slate-400">UPI Rules · {f.upi.rules.decision}</div>
+                                  <div className="flex flex-wrap gap-1 mt-1">
+                                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-emerald-50 text-emerald-700 border-emerald-200">{f.upi.rules.passed} passed</span>
+                                    {f.upi.rules.failed > 0 && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-rose-50 text-rose-700 border-rose-200">{f.upi.rules.failed} failed</span>
+                                    )}
+                                    {f.upi.rules.skipped > 0 && (
+                                      <span className="text-[9px] font-bold px-1.5 py-0.5 rounded border bg-slate-100 text-slate-500 border-slate-200">{f.upi.rules.skipped} skipped</span>
+                                    )}
+                                  </div>
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <p className="text-[10px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-2.5 py-1.5">
+                              {f.upi.message}
                             </p>
                           )
                         )}
@@ -1810,15 +1877,15 @@ export default function Page2Pipeline({
             <h2 className="text-sm font-bold text-slate-800 flex items-center gap-2">
               <BarChart3 className="w-4 h-4 text-purple-700" /> Model Evaluation
               <span className="text-[9px] font-mono text-slate-400 font-normal">
-                {isGstRun ? 'GST · real 3-fold CV' : isBbpsRun ? 'BBPS · real 3-fold CV' : 'real 5-fold cross-validation'}
+                {isGstRun ? 'GST · real 3-fold CV' : isBbpsRun ? 'BBPS · real 3-fold CV' : isUpiRun ? 'UPI · real 3-fold CV' : 'real 5-fold cross-validation'}
               </span>
             </h2>
             <div className="flex items-center gap-2">
-              {(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : evalSummary.sessionTrainedAt) && (
+              {(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : isUpiRun ? evalSummary.upiTrainedAt : evalSummary.sessionTrainedAt) && (
                 <span className="text-[9px] font-mono text-slate-400 hidden sm:inline">
-                  {isGstRun ? evalSummary.gstAlgorithm : isBbpsRun ? evalSummary.bbpsAlgorithm : evalSummary.sessionAlgorithm}
+                  {isGstRun ? evalSummary.gstAlgorithm : isBbpsRun ? evalSummary.bbpsAlgorithm : isUpiRun ? evalSummary.upiAlgorithm : evalSummary.sessionAlgorithm}
                   {' · '}
-                  {new Date(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : evalSummary.sessionTrainedAt).toLocaleString()}
+                  {new Date(isGstRun ? evalSummary.gstTrainedAt : isBbpsRun ? evalSummary.bbpsTrainedAt : isUpiRun ? evalSummary.upiTrainedAt : evalSummary.sessionTrainedAt).toLocaleString()}
                 </span>
               )}
               <button onClick={() => { reEvaluate(); loadEvalSummary(); }} disabled={reEvaluating}
@@ -1842,7 +1909,7 @@ export default function Page2Pipeline({
                 </tr>
               </thead>
               <tbody className="divide-y divide-purple-50">
-                {!isGstRun && !isBbpsRun && evalSummary.sessionModels?.filter((m) => m.kind !== 'pattern').map((m) => {
+                {!isGstRun && !isBbpsRun && !isUpiRun && evalSummary.sessionModels?.filter((m) => m.kind !== 'pattern').map((m) => {
                   const sel = m.modelId === evalModelId;
                   return (
                     <tr key={m.modelId}
@@ -1859,7 +1926,7 @@ export default function Page2Pipeline({
                     </tr>
                   );
                 })}
-                {!isGstRun && !isBbpsRun && evalSummary.datasetModel && (
+                {!isGstRun && !isBbpsRun && !isUpiRun && evalSummary.datasetModel && (
                   <tr className="bg-emerald-50/50">
                     <td className="py-1.5 px-3 font-bold text-slate-800">
                       Population Model <span className="text-[8px] bg-emerald-600 text-white px-1 py-0.5 rounded">v{evalSummary.datasetModel.version}</span>
@@ -1908,6 +1975,24 @@ export default function Page2Pipeline({
                     </tr>
                   );
                 })}
+                {isUpiRun && evalSummary.upiModels?.filter((m) => m.kind !== 'pattern').map((m) => {
+                  const sel = m.modelId === evalModelId;
+                  return (
+                    <tr key={m.modelId}
+                      onClick={() => setEvalModelId(m.modelId)}
+                      className={`cursor-pointer ${sel ? 'bg-slate-50/70' : 'hover:bg-purple-50/20'}`}>
+                      <td className="py-1.5 px-3 font-bold text-slate-800">
+                        {sel && <span className="text-purple-500">▸ </span>}{m.name}
+                        <span className="ml-1.5 text-[8px] font-black text-purple-700 bg-purple-100 border border-purple-200 rounded px-1">UPI</span>
+                      </td>
+                      <td className="py-1.5 px-3 text-right font-extrabold text-emerald-700">{asPct(m.metricValue)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.precision)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.recall)}</td>
+                      <td className="py-1.5 px-3 text-right">{asPct(m.f1)}</td>
+                      <td className="py-1.5 px-3 text-right text-purple-400 text-[9px]">{sel ? 'shown below' : 'view'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -1917,7 +2002,7 @@ export default function Page2Pipeline({
           <div className="space-y-2 border border-slate-200 rounded-lg bg-slate-50/20 p-2.5">
             <div className="flex items-center justify-between">
               <span className="text-[9px] font-mono font-bold text-purple-600 uppercase">
-                {[...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || []), ...(evalSummary.bbpsModels || [])]
+                {[...(evalSummary.sessionModels || []), ...(evalSummary.gstModels || []), ...(evalSummary.bbpsModels || []), ...(evalSummary.upiModels || [])]
                   .find((x) => x.modelId === evalModelId)?.name} — detail
               </span>
               {modelEval.evalMetrics.metricMeta?.cvTitle && (
@@ -1983,6 +2068,8 @@ export default function Page2Pipeline({
               ? 'GST heads: real 3-fold CV on the GST underwriting corpus. '
               : isBbpsRun
               ? 'BBPS heads: real 3-fold CV on the BBPS utility-payment corpus. '
+              : isUpiRun
+              ? 'UPI heads: real 3-fold CV on the UPI transaction corpus. '
               : 'Session models: real 5-fold CV, ~600 profiles anchored to the uploaded statement. Population model: dataset-trained (AI Intelligence). '}
             Click a model row to see its per-fold detail below.
           </p>

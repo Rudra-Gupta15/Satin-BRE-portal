@@ -199,6 +199,57 @@ const BBPS_SUB_TABS = [
   { id: 'rules', label: 'Signal Result' },
   { id: 'bre', label: 'BRE payload' },
 ];
+
+// ── UPI — twin of the BBPS/GST constants above ──────────────────────────────
+const UPI_SHORT_NAME = {
+  upi_transaction_risk_model: 'Risk',
+  upi_payment_reliability_score_model: 'Reliability',
+  upi_spend_behaviour_model: 'Behaviour',
+  upi_network_stability_model: 'Stability',
+};
+
+const UPI_HEAD_DESC = {
+  upi_transaction_risk_model: 'A Gradient-Boosting classifier that assigns a LOW / MEDIUM / HIGH UPI transaction risk band from failed-payment rate, high-risk-MCC spend share, payee-network thinness and statement tenure combined.',
+  upi_payment_reliability_score_model: 'A Gradient-Boosting regressor that scores 0–100 payment reliability from the success/failed transaction ratio alone — how consistently the applicant’s UPI payments actually go through.',
+  upi_spend_behaviour_model: 'A Gradient-Boosting classifier that labels spend cadence REGULAR (recurring payees, steady daily rate) vs IRREGULAR (sporadic, one-off), independent of payment reliability or risk.',
+  upi_network_stability_model: 'A Gradient-Boosting regressor that scores 0–100 network stability from payee/payer diversity and statement tenure — how established the applicant’s UPI footprint is.',
+};
+
+function upiHeadline(modelId, heads) {
+  const risk = heads.upi_transaction_risk_model?.label;
+  const rel = heads.upi_payment_reliability_score_model?.value;
+  const behaviour = heads.upi_spend_behaviour_model?.label;
+  const stab = heads.upi_network_stability_model?.value;
+  const riskBadge = { text: risk || '—', tone: risk || 'MEDIUM' };
+  const scoreBadge = (v) => ({
+    text: v == null ? '—' : v >= 75 ? 'Strong' : v >= 50 ? 'Adequate' : 'Weak',
+    tone: v == null ? 'MEDIUM' : v >= 75 ? 'LOW' : v >= 50 ? 'MEDIUM' : 'HIGH',
+  });
+  switch (modelId) {
+    case 'upi_payment_reliability_score_model':
+      return { big: rel == null ? '—' : rel.toFixed(1), unit: 'payment reliability / 100', badge: scoreBadge(rel),
+        line: `Risk ${risk || '—'} · behaviour ${behaviour || '—'}` };
+    case 'upi_spend_behaviour_model':
+      return { big: behaviour || '—', unit: 'UPI spend cadence', badge: { text: behaviour || '—', tone: behaviour === 'REGULAR' ? 'LOW' : 'MEDIUM' },
+        line: `Reliability ${rel?.toFixed?.(1) ?? '—'} / 100` };
+    case 'upi_network_stability_model':
+      return { big: stab == null ? '—' : stab.toFixed(1), unit: 'UPI network stability / 100', badge: scoreBadge(stab),
+        line: `Risk ${risk || '—'} · reliability ${rel?.toFixed?.(1) ?? '—'}` };
+    default:
+      return { big: risk || '—', unit: 'UPI transaction risk band', badge: riskBadge,
+        line: `Reliability ${rel?.toFixed?.(1) ?? '—'} · stability ${stab?.toFixed?.(1) ?? '—'} · ${behaviour || '—'}` };
+  }
+}
+
+const UPI_SUB_TABS = [
+  { id: 'output', label: 'Model Output' },
+  { id: 'metrics', label: 'MCC Breakdown' },
+  { id: 'factors', label: 'Top Factors' },
+  { id: 'pattern_match', label: 'Anomaly & Fraud' },
+  { id: 'rules', label: 'Signal Result' },
+  { id: 'bre', label: 'BRE payload' },
+];
+
 const RULE_PILL = (s) => s === 'PASS'
   ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
   : s === 'FAIL' ? 'bg-rose-100 text-rose-800 border-rose-200'
@@ -1050,6 +1101,348 @@ function BbpsTestResults({
   );
 }
 
+// ── UPI results — twin of BbpsTestResults, adapted for a per-MCC spend
+// breakdown instead of a per-utility one. ───────────────────────────────────
+function UpiTestResults({
+  bundle, isLoading, activeModelId, modelName, fileName, customId, onReprocess,
+  headModels = [], onSelectModel, tab = 'output', onSelectTab, bre, breLoading,
+  patternMatch, patternLoading, copiedPayload, onCopyPayload,
+}) {
+  if (isLoading && !bundle) {
+    return (
+      <div className="py-16 flex items-center justify-center text-purple-700 text-xs font-bold gap-2">
+        <Loader2 className="w-4 h-4 animate-spin" /> Scoring UPI profile…
+      </div>
+    );
+  }
+  if (!bundle) return null;
+  if (!bundle.available) {
+    return (
+      <div className="p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-semibold">
+        {bundle.message || 'Upload a UPI file on this page to score it.'}
+      </div>
+    );
+  }
+
+  const analysis = bundle.analysis || {};
+  const prediction = bundle.prediction || {};
+  const heads = prediction.headScores || {};
+  const label = (customId || '').trim() || cleanStatementLabel(fileName) || 'UPI Profile';
+  const head = upiHeadline(activeModelId, heads);
+  const byMcc = analysis.byMcc || [];
+
+  return (
+    <div className="space-y-5">
+      {/* Statement-style header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
+        <div className="flex items-center space-x-3 flex-wrap gap-y-1">
+          <h2 className="text-xl font-extrabold text-slate-800">UPI Profile — {label}</h2>
+          <span className="px-2.5 py-0.5 rounded-md bg-slate-100 border border-slate-200 text-[10px] font-extrabold font-mono text-purple-900">
+            {isLoading ? 'SCORING' : 'SCORED'}
+          </span>
+          <span className="px-2.5 py-0.5 rounded-md border bg-emerald-100 border-emerald-200 text-emerald-800 text-[10px] font-extrabold font-mono">
+            YOUR UPLOADED DATA
+          </span>
+          <span className="text-xs text-slate-500 font-semibold">
+            {analysis.totalTransactions} transaction{analysis.totalTransactions === 1 ? '' : 's'} · {((analysis.successRatio || 0) * 100).toFixed(0)}% success · {analysis.spanMonths} month(s) of history
+          </span>
+        </div>
+        {onReprocess && (
+          <button
+            type="button"
+            onClick={onReprocess}
+            className="px-4 py-2 rounded-xl bg-white hover:bg-slate-50 border border-slate-200 text-slate-800 text-xs font-bold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+          >
+            Reprocess process
+          </button>
+        )}
+      </div>
+
+      {/* Tab bar — the 4 UPI models + sub-views */}
+      <div className="border-b border-slate-200 flex space-x-5 overflow-x-auto">
+        {headModels.map((m) => {
+          const isActive = tab === 'output' && activeModelId === m.id;
+          return (
+            <button
+              key={m.id}
+              type="button"
+              onClick={() => { onSelectModel?.(m.id); onSelectTab?.('output'); }}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {UPI_SHORT_NAME[m.id] || shortModelName(m.name)} {m.version && <span className="text-[10px] font-mono text-slate-400">{m.version}</span>}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+        <span className="w-px bg-slate-200 my-1 shrink-0" aria-hidden />
+        {UPI_SUB_TABS.filter((t) => t.id !== 'output').map((t) => {
+          const isActive = tab === t.id;
+          return (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => onSelectTab?.(t.id)}
+              className={`pb-3 text-sm font-bold transition-all relative whitespace-nowrap cursor-pointer ${
+                isActive ? 'text-slate-800' : 'text-slate-500 hover:text-purple-800'
+              }`}
+            >
+              {t.label}
+              {isActive && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#3b0764] rounded-full" />}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ─────────── SIGNAL RESULT TAB ─────────── */}
+      {tab === 'rules' && (
+        <div className="space-y-4 animate-fadeIn">
+          {breLoading && (
+            <div className="py-10 flex items-center justify-center gap-2 text-purple-700 text-xs font-bold">
+              <Loader2 className="w-4 h-4 animate-spin" /> Evaluating UPI rules…
+            </div>
+          )}
+
+          {!breLoading && bre && bre.available === false && (
+            <div className="border border-amber-200 rounded-2xl p-5 bg-amber-50 text-amber-900 text-xs font-semibold">
+              {bre.message}
+            </div>
+          )}
+
+          {!breLoading && bre?.evaluation && (
+            <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-5 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 pb-4">
+                <div>
+                  <span className="text-[10px] font-mono font-bold text-purple-600 uppercase">
+                    UPI BRE Rule Evaluation
+                  </span>
+                  <h2 className="text-lg font-bold text-slate-800">Signals Decision</h2>
+                  <p className="text-[11px] text-slate-500 font-mono mt-0.5">
+                    Stability score {bre.evaluation.creditScore} · gate ≥ {bre.evaluation.gateThreshold}
+                  </p>
+                </div>
+                <span className={`px-4 py-2 rounded-xl border text-sm font-extrabold ${GST_DECISION_STYLE[bre.evaluation.decision] || 'bg-slate-100 text-slate-700 border-slate-200'}`}>
+                  {bre.evaluation.decision}
+                </span>
+              </div>
+
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {[
+                  ['PASSED', bre.evaluation.passed, 'text-emerald-700'],
+                  ['FAILED', bre.evaluation.failed, 'text-rose-700'],
+                  ['NOT EVALUATED', bre.evaluation.skipped, 'text-slate-400'],
+                  ['RULES ENABLED', bre.evaluation.enabledCount, 'text-slate-800'],
+                ].map(([lbl, val, color]) => (
+                  <div key={lbl} className="p-3 rounded-xl bg-slate-50/60 border border-slate-200">
+                    <div className="text-[9px] font-mono font-bold text-slate-400 uppercase">{lbl}</div>
+                    <div className={`text-xl font-extrabold font-mono ${color}`}>{val}</div>
+                  </div>
+                ))}
+              </div>
+
+              {bre.evaluation.seriousFlags?.length > 0 && (
+                <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-2.5">
+                  <div className="text-[10px] font-bold text-rose-800 uppercase flex items-center gap-1.5 mb-1">
+                    <AlertTriangle className="w-3.5 h-3.5" /> Serious flags driving the decision
+                  </div>
+                  <div className="text-xs text-rose-800 font-medium">{bre.evaluation.seriousFlags.join(' · ')}</div>
+                </div>
+              )}
+
+              <PaginatedRuleList results={bre.evaluation.results} product="UPI transaction signal" decision={bre.evaluation.decision} />
+            </div>
+          )}
+        </div>
+      )}
+
+      {tab === 'pattern_match' && (
+        <PatternMatchView data={patternMatch} loading={patternLoading} />
+      )}
+
+      {/* ─────────── BRE PAYLOAD TAB (raw JSON) ─────────── */}
+      {tab === 'bre' && (
+        <div className="border border-slate-200 rounded-2xl p-6 bg-white space-y-4 shadow-sm animate-fadeIn">
+          <div className="flex items-center justify-between border-b border-slate-200 pb-3">
+            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
+              <Code className="w-4 h-4 text-purple-700" /> BRE Output Payload (JSON)
+            </h2>
+            <button
+              type="button"
+              onClick={() => onCopyPayload?.(bre?.payload)}
+              className={`px-3 py-1.5 rounded-lg border text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer ${
+                copiedPayload ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50'
+              }`}
+            >
+              {copiedPayload ? <><Check className="w-3.5 h-3.5" />Copied</> : <><Copy className="w-3.5 h-3.5" />Copy JSON</>}
+            </button>
+          </div>
+          <pre className="bg-slate-50/40 p-5 rounded-xl text-xs font-mono text-slate-800 overflow-x-auto border border-slate-200 shadow-xs font-bold leading-relaxed">
+            {bre?.payload ? JSON.stringify(bre.payload, null, 2) : (breLoading ? 'Evaluating…' : 'No payload yet.')}
+          </pre>
+        </div>
+      )}
+
+      {/* ─────────── TOP FACTORS TAB ─────────── */}
+      {tab === 'factors' && (
+        <div className="space-y-3 animate-fadeIn">
+          <p className="text-[11px] text-slate-500">
+            Per model — the inputs each UPI head weights most, ranked by importance × distance from the training-corpus
+            average (σ).
+          </p>
+          {[
+            'upi_transaction_risk_model', 'upi_payment_reliability_score_model',
+            'upi_spend_behaviour_model', 'upi_network_stability_model',
+          ].filter((id) => heads[id]).map((id) => {
+            const hf = heads[id]?.topFactors || [];
+            return (
+              <div key={id} className={`border rounded-2xl p-4 bg-white shadow-sm space-y-2.5 ${id === activeModelId ? 'border-[#ea580c] ring-1 ring-orange-200' : 'border-slate-200'}`}>
+                <h3 className="text-xs font-bold text-slate-800">{heads[id].name}</h3>
+                {hf.length > 0 ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                    {hf.slice(0, 6).map((f, i) => (
+                      <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-slate-50/60 border border-slate-200 rounded-lg px-2.5 py-1.5">
+                        <span className="text-slate-700 truncate">{f.feature}</span>
+                        <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                          {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400">No standout factors for this profile.</p>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ─────────── MCC BREAKDOWN TAB (twin of BBPS's Utility Breakdown) ─────────── */}
+      {tab === 'metrics' && (
+        <div className="space-y-4 animate-fadeIn">
+          <div className="border border-slate-200 rounded-2xl p-5 bg-white shadow-sm space-y-3">
+            <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <Table className="w-4 h-4 text-purple-700" /> Per-Merchant-Category Breakdown
+            </h3>
+            {byMcc.length > 0 ? (
+              <div className="overflow-x-auto border border-slate-200 rounded-xl">
+                <table className="w-full text-left text-xs font-mono">
+                  <thead className="bg-slate-50/80 text-slate-800 border-b border-slate-200 text-[11px] uppercase tracking-wider font-bold">
+                    <tr>
+                      <th className="py-2.5 px-3">MCC</th>
+                      <th className="py-2.5 px-3">Category</th>
+                      <th className="py-2.5 px-3 text-right">Payments</th>
+                      <th className="py-2.5 px-3 text-right">Total Spend</th>
+                      <th className="py-2.5 px-3">Risk</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-purple-100 bg-white">
+                    {byMcc.map((t) => (
+                      <tr key={t.mcc} className="hover:bg-slate-50/30 text-slate-800">
+                        <td className="py-2 px-3 font-bold text-slate-800">{t.mcc}</td>
+                        <td className="py-2 px-3">{t.label}</td>
+                        <td className="py-2 px-3 text-right">{t.paymentCount}</td>
+                        <td className="py-2 px-3 text-right">{inrShort(t.totalAmount)}</td>
+                        <td className="py-2 px-3">
+                          <span className={`px-2 py-0.5 rounded-md border text-[10px] font-extrabold ${t.highRisk ? 'bg-rose-100 border-rose-200 text-rose-800' : 'bg-emerald-100 border-emerald-200 text-emerald-800'}`}>
+                            {t.highRisk ? 'High-Risk' : 'Normal'}
+                          </span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-[11px] text-slate-400">No merchant-category (P2M) spend for this statement.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ─────────── MODEL OUTPUT TAB ─────────── */}
+      {tab === 'output' && (<>
+      {(() => {
+        const hm = heads[activeModelId] || {};
+        const desc = hm.desc || UPI_HEAD_DESC[activeModelId];
+        const hf = hm.topFactors || [];
+        return (
+      <div className="border border-slate-200 rounded-2xl p-5 bg-white space-y-5 shadow-sm animate-fadeIn">
+        <div className="flex items-start justify-between border-b border-slate-200 pb-3 gap-4">
+          <div className="min-w-0">
+            <span className="text-[10px] font-mono uppercase text-purple-600 font-bold block">MODEL OUTPUT RESULT</span>
+            <h2 className="text-lg font-bold text-slate-800">{modelName || 'UPI Transaction'} Output</h2>
+            {desc && <p className="text-[11px] text-slate-500 mt-0.5 leading-relaxed max-w-xl">{desc}</p>}
+          </div>
+          <div className="text-right shrink-0">
+            <span className={`px-3 py-1 rounded-lg text-xs font-bold font-mono inline-block shadow-sm ${BADGE_TONE[head.badge.tone] || BADGE_TONE.MEDIUM}`}>
+              {head.badge.text}
+            </span>
+            <div className="text-xs font-mono font-bold text-purple-900 mt-1">{head.line}</div>
+          </div>
+        </div>
+
+        {/* big headline number */}
+        <div className="flex items-end gap-3">
+          <div className="text-4xl font-extrabold text-slate-900 font-mono leading-none">{head.big}</div>
+          <div className="text-[11px] text-slate-400 pb-1">{head.unit}</div>
+          <div className="ml-auto text-[11px] font-mono text-slate-500 text-right">GRADIENT BOOSTING</div>
+        </div>
+
+        {/* what moved this specific result — per-head drivers */}
+        {hf.length > 0 && (
+          <div className="rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 space-y-2">
+            <div className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+              What moved this result — the inputs {(modelName || '').replace(' Model', '')} weights most, furthest from the corpus average
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+              {hf.slice(0, 6).map((f, i) => (
+                <div key={i} className="flex items-center justify-between text-[11px] font-mono bg-white border border-slate-200 rounded-lg px-2.5 py-1.5">
+                  <span className="text-slate-600 truncate">{f.feature}</span>
+                  <span className={`font-bold shrink-0 ${f.zScore >= 0 ? 'text-emerald-700' : 'text-rose-600'}`}>
+                    {f.zScore >= 0 ? '+' : ''}{f.zScore}σ
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* merchant spend mix — bar breakdown; there's no time-series for one file */}
+        <div>
+          <h3 className="text-xs font-bold text-slate-700 mb-3">Merchant Spend Mix</h3>
+          {byMcc.length > 0 ? (
+            <div className="space-y-2 bg-slate-50/40 border border-slate-200 rounded-xl p-4">
+              {(() => {
+                const total = byMcc.reduce((s, t) => s + (t.totalAmount || 0), 0) || 1;
+                return byMcc.map((t) => (
+                  <div key={t.mcc} className="space-y-1">
+                    <div className="flex items-center justify-between text-[11px] font-mono">
+                      <span className="text-slate-700 font-bold">{t.label}</span>
+                      <span className="text-slate-500">{inrShort(t.totalAmount)} · {((t.totalAmount / total) * 100).toFixed(0)}%</span>
+                    </div>
+                    <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
+                      <div className={`h-full rounded-full ${t.highRisk ? 'bg-rose-500' : 'bg-purple-600'}`} style={{ width: `${Math.max(2, (t.totalAmount / total) * 100)}%` }} />
+                    </div>
+                  </div>
+                ));
+              })()}
+            </div>
+          ) : (
+            <div className="h-24 flex items-center justify-center text-[11px] text-slate-400 bg-slate-50/40 border border-slate-200 rounded-xl">
+              No merchant (P2M) spend to plot.
+            </div>
+          )}
+        </div>
+      </div>
+        );
+      })()}
+      </>)}
+    </div>
+  );
+}
+
 // ── Pattern Match — written for a non-technical reviewer ────────────────────
 // Everything here is a plain sentence + one clear icon. No jargon, no bare
 // numbers, no dot strips. The verdict is a traffic light; the two questions are
@@ -1353,6 +1746,8 @@ export default function Page3Inference({
   const [gstBundle, setGstBundle] = useState(null); // GST score-testing result
   const [bbpsReg, setBbpsReg] = useState(null);       // BBPS registry: { versions, active, deployed, heads }
   const [bbpsBundle, setBbpsBundle] = useState(null); // BBPS score-testing result
+  const [upiReg, setUpiReg] = useState(null);       // UPI registry: { versions, active, deployed, heads }
+  const [upiBundle, setUpiBundle] = useState(null); // UPI score-testing result
 
   // Deployed GST heads (from the GST registry) sit alongside the deployed bank models.
   const gstDeployedModels = (gstReg?.versions?.length ? gstReg.heads || [] : [])
@@ -1361,10 +1756,14 @@ export default function Page3Inference({
   const bbpsDeployedModels = (bbpsReg?.versions?.length ? bbpsReg.heads || [] : [])
     .filter(h => bbpsReg?.deployed?.[h.id] ?? true)
     .map(h => ({ id: h.id, name: h.name, kind: 'bbps' }));
+  const upiDeployedModels = (upiReg?.versions?.length ? upiReg.heads || [] : [])
+    .filter(h => upiReg?.deployed?.[h.id] ?? true)
+    .map(h => ({ id: h.id, name: h.name, kind: 'upi' }));
   const deployedModels = [
-    ...modelsList.filter(m => m.kind !== 'gst' && m.kind !== 'bbps' && deployedStatusMap[m.id] === "Deployed"),
+    ...modelsList.filter(m => m.kind !== 'gst' && m.kind !== 'bbps' && m.kind !== 'upi' && deployedStatusMap[m.id] === "Deployed"),
     ...gstDeployedModels,
     ...bbpsDeployedModels,
+    ...upiDeployedModels,
   ];
   // The model list is scoped to the selected input data source AND to what is
   // currently deployed. All four bank models ship deployed, so a fresh session
@@ -1373,7 +1772,8 @@ export default function Page3Inference({
     deployedModels.filter(m => (
       srcId === 'gst_data' ? m.kind === 'gst'
       : srcId === 'bbps_utility' ? m.kind === 'bbps'
-      : m.kind !== 'gst' && m.kind !== 'bbps'
+      : srcId === 'upi_enrichment' ? m.kind === 'upi'
+      : m.kind !== 'gst' && m.kind !== 'bbps' && m.kind !== 'upi'
     ));
   // Multi-select: which deployed models are in scope (default = all of them).
   const [selectedModelIds, setSelectedModelIds] = useState(null); // null until deployedModels known
@@ -1392,6 +1792,9 @@ export default function Page3Inference({
   const [bbpsTab, setBbpsTab] = useState('output');       // BBPS result sub-tab
   const [bbpsBre, setBbpsBre] = useState(null);           // BBPS BRE eval result
   const [bbpsBreLoading, setBbpsBreLoading] = useState(false);
+  const [upiTab, setUpiTab] = useState('output');       // UPI result sub-tab
+  const [upiBre, setUpiBre] = useState(null);           // UPI BRE eval result
+  const [upiBreLoading, setUpiBreLoading] = useState(false);
   const [bundle, setBundle] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -1425,6 +1828,7 @@ export default function Page3Inference({
         setGstTab('output');
         setBundle(null);
         setBbpsBundle(null);
+        setUpiBundle(null);
       } else if (saved && saved._kind === 'bbps') {
         setSelectedInputSourceId('bbps_utility');
         setSelectedModelId('bbps_utility_payment_risk_model');
@@ -1432,10 +1836,20 @@ export default function Page3Inference({
         setBbpsTab('output');
         setBundle(null);
         setGstBundle(null);
+        setUpiBundle(null);
+      } else if (saved && saved._kind === 'upi') {
+        setSelectedInputSourceId('upi_enrichment');
+        setSelectedModelId('upi_transaction_risk_model');
+        setUpiBundle(saved);
+        setUpiTab('output');
+        setBundle(null);
+        setGstBundle(null);
+        setBbpsBundle(null);
       } else {
         setBundle(saved);
         setGstBundle(null);
         setBbpsBundle(null);
+        setUpiBundle(null);
       }
       setHasTested(true);
       setViewingHistory({ id: row.rowId, label: row.id });
@@ -1451,6 +1865,7 @@ export default function Page3Inference({
     setBundle(null);
     setGstBundle(null);
     setBbpsBundle(null);
+    setUpiBundle(null);
     setLoadError('');
     loadHistory();
   };
@@ -1459,6 +1874,7 @@ export default function Page3Inference({
     api.get('/data-sources').then((data) => setAllSources(data.dataSources));
     api.get('/gst/model/registry').then(setGstReg).catch(() => {});
     api.get('/bbps/model/registry').then(setBbpsReg).catch(() => {});
+    api.get('/upi/model/registry').then(setUpiReg).catch(() => {});
     loadHistory();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1475,6 +1891,9 @@ export default function Page3Inference({
     }
     if (bbpsDeployedModels.length && !base.some(o => o.value === 'bbps_utility')) {
       base.push({ value: 'bbps_utility', label: 'BBPS Utility Payment History' });
+    }
+    if (upiDeployedModels.length && !base.some(o => o.value === 'upi_enrichment')) {
+      base.push({ value: 'upi_enrichment', label: 'UPI Transaction Data Enrichment' });
     }
     return base;
   })();
@@ -1516,10 +1935,13 @@ export default function Page3Inference({
     || { name: "Risk Model" };
   const isGstActive = activeModelObj?.kind === 'gst';
   const isBbpsActive = activeModelObj?.kind === 'bbps';
+  const isUpiActive = activeModelObj?.kind === 'upi';
   const activeVersion = isGstActive
     ? (gstReg?.active ? `v${gstReg.active}` : '')
     : isBbpsActive
     ? (bbpsReg?.active ? `v${bbpsReg.active}` : '')
+    : isUpiActive
+    ? (upiReg?.active ? `v${upiReg.active}` : '')
     : (selectedVersionMap[activeModelId] || "v3.4");
 
   // `record` = deliberate run (upload / Run Analysis). On those, we log a history
@@ -1539,6 +1961,7 @@ export default function Page3Inference({
         setPatternMatch(null);
         setBundle(null);
         setBbpsBundle(null);
+        setUpiBundle(null);
         setHasTested(true);
         setViewingHistory(null);
         if (!g.available) setLoadError(g.message || 'No GST file uploaded on this page yet.');
@@ -1562,11 +1985,36 @@ export default function Page3Inference({
         setPatternMatch(null);
         setBundle(null);
         setGstBundle(null);
+        setUpiBundle(null);
         setHasTested(true);
         setViewingHistory(null);
         if (!b.available) setLoadError(b.message || 'No BBPS file uploaded on this page yet.');
         else if (record) {
           api.post('/bbps/record-test', { customId, fileName: inputFileName }).then(loadHistory).catch(() => {});
+        }
+      } catch (err) {
+        setLoadError(err.message);
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // UPI heads share one scoring call against the UPI file uploaded on this page.
+    if (deployedModels.find(m => m.id === modelId)?.kind === 'upi') {
+      try {
+        const u = await api.get('/upi/score-testing');
+        setUpiBundle(u);
+        setUpiBre(null);
+        setPatternMatch(null);
+        setBundle(null);
+        setGstBundle(null);
+        setBbpsBundle(null);
+        setHasTested(true);
+        setViewingHistory(null);
+        if (!u.available) setLoadError(u.message || 'No UPI file uploaded on this page yet.');
+        else if (record) {
+          api.post('/upi/record-test', { customId, fileName: inputFileName }).then(loadHistory).catch(() => {});
         }
       } catch (err) {
         setLoadError(err.message);
@@ -1589,7 +2037,8 @@ export default function Page3Inference({
         // background-record the other selected models, then refresh the list
         const gstIds = new Set(gstDeployedModels.map((g) => g.id));
         const bbpsIds = new Set(bbpsDeployedModels.map((b) => b.id));
-        const others = chosenModelIds.filter((m) => m !== modelId && !gstIds.has(m) && !bbpsIds.has(m));
+        const upiIds = new Set(upiDeployedModels.map((u) => u.id));
+        const others = chosenModelIds.filter((m) => m !== modelId && !gstIds.has(m) && !bbpsIds.has(m) && !upiIds.has(m));
         await Promise.allSettled(
           others.map((m) =>
             api.post('/inference/run', { modelId: m, customId, bankName: bank, sourceId, record: true }),
@@ -1617,6 +2066,8 @@ export default function Page3Inference({
     setGstBre(null);
     setBbpsBundle(null);
     setBbpsBre(null);
+    setUpiBundle(null);
+    setUpiBre(null);
     setBreRun(null);
     setPatternMatch(null);
     setInputFileName('');
@@ -1624,6 +2075,7 @@ export default function Page3Inference({
     setLoadError('');
     setGstTab('output');
     setBbpsTab('output');
+    setUpiTab('output');
     setActiveTab('analytics');
   }, [selectedInputSourceId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1647,22 +2099,35 @@ export default function Page3Inference({
       .finally(() => setBbpsBreLoading(false));
   }, [bbpsTab, bbpsBundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Run the anomaly/fraud pattern match when its tab opens (AA + GST + BBPS).
+  // Evaluate the UPI BRE rules when the "Rule Result" / "BRE payload" tab opens.
+  useEffect(() => {
+    if ((upiTab !== 'rules' && upiTab !== 'bre') || !upiBundle?.available || upiBre || upiBreLoading) return;
+    setUpiBreLoading(true);
+    api.post('/upi/bre-evaluate')
+      .then(setUpiBre)
+      .catch((err) => setUpiBre({ available: false, message: err.message }))
+      .finally(() => setUpiBreLoading(false));
+  }, [upiTab, upiBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Run the anomaly/fraud pattern match when its tab opens (AA + GST + BBPS + UPI).
   useEffect(() => {
     const aaOpen = activeTab === 'pattern_match' && bundle && !patternMatch;
     const gstOpen = gstTab === 'pattern_match' && gstBundle?.available && !patternMatch;
     const bbpsOpen = bbpsTab === 'pattern_match' && bbpsBundle?.available && !patternMatch;
-    if ((!aaOpen && !gstOpen && !bbpsOpen) || patternLoading) return;
+    const upiOpen = upiTab === 'pattern_match' && upiBundle?.available && !patternMatch;
+    if ((!aaOpen && !gstOpen && !bbpsOpen && !upiOpen) || patternLoading) return;
     setPatternLoading(true);
     const req = gstOpen
       ? api.get('/gst/pattern-match')
       : bbpsOpen
       ? api.get('/bbps/pattern-match')
+      : upiOpen
+      ? api.get('/upi/pattern-match')
       : api.post('/inference/patterns', { customId: customId || 'applicant', sourceId: selectedInputSourceId });
     req.then(setPatternMatch)
       .catch((err) => setPatternMatch({ available: false, message: err.message }))
       .finally(() => setPatternLoading(false));
-  }, [activeTab, gstTab, bbpsTab, bundle, gstBundle, bbpsBundle]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeTab, gstTab, bbpsTab, upiTab, bundle, gstBundle, bbpsBundle, upiBundle]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Re-run when the focused model changes — but only once a test has actually
   // been run on this page (never on first load, never while viewing history).
@@ -1720,6 +2185,18 @@ export default function Page3Inference({
         let bbpsModelId = activeModelObj?.kind === 'bbps' ? activeModelId : bbpsDeployedModels[0]?.id;
         if (bbpsModelId && bbpsModelId !== activeModelId) { setSelectedModelId(bbpsModelId); }
         await runInference(bbpsModelId || activeModelId, customId, customBankName, 'bbps_utility', true);
+        return;
+      }
+
+      // UPI file → the UPI subsystem parsed & scored it; go straight to UPI results.
+      const upi = data?.statement?.upi || data?.uploadedFiles?.upi_enrichment?.[0]?.upi;
+      if (selectedInputSourceId === 'upi_enrichment' || upi) {
+        setInputUploadInfo(upi?.available
+          ? `${upi.totalTransactions} UPI transaction(s) scored`
+          : 'No UPI transactions found in this file');
+        let upiModelId = activeModelObj?.kind === 'upi' ? activeModelId : upiDeployedModels[0]?.id;
+        if (upiModelId && upiModelId !== activeModelId) { setSelectedModelId(upiModelId); }
+        await runInference(upiModelId || activeModelId, customId, customBankName, 'upi_enrichment', true);
         return;
       }
 
@@ -2100,7 +2577,39 @@ export default function Page3Inference({
         />
       )}
 
-      {hasTested && !isGstActive && !isBbpsActive && (
+      {/* ── UPI results — a UPI head is the active model ── */}
+      {hasTested && isUpiActive && (
+        <UpiTestResults
+          bundle={upiBundle}
+          isLoading={isLoading}
+          activeModelId={activeModelId}
+          modelName={activeModelObj?.name}
+          fileName={inputFileName}
+          customId={customId}
+          onReprocess={onReprocessPipeline}
+          headModels={sourceModels.map((m) => ({
+            id: m.id, name: UPI_SHORT_NAME[m.id] || m.name,
+            version: upiReg?.active ? `v${upiReg.active}` : '',
+          }))}
+          onSelectModel={(id) => { setSelectedModelId(id); setUpiTab('output'); }}
+          tab={upiTab}
+          onSelectTab={setUpiTab}
+          bre={upiBre}
+          breLoading={upiBreLoading}
+          patternMatch={patternMatch}
+          patternLoading={patternLoading}
+          copiedPayload={copiedPayload}
+          onCopyPayload={(payload) => {
+            if (!payload) return;
+            navigator.clipboard?.writeText(JSON.stringify(payload, null, 2)).then(
+              () => { setCopiedPayload(true); setTimeout(() => setCopiedPayload(false), 1800); },
+              () => {},
+            );
+          }}
+        />
+      )}
+
+      {hasTested && !isGstActive && !isBbpsActive && !isUpiActive && (
       <>
       {/* ── results ── */}
 
